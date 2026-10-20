@@ -161,6 +161,7 @@ fn http_error(status: reqwest::StatusCode, body: &str) -> String {
         403 | 429 if msg.to_lowercase().contains("rate limit") => {
             "Достигнут лимит запросов GitHub API (60/час без токена). Подождите или укажите токен в настройках.".into()
         }
+        403 if msg.contains("not accessible") => "У токена нет права записи. На GitHub: Permissions → Repository → Contents → Read and write, и доступ к репозиторию dobeg-liveries.".into(),
         403 => format!("Нет прав доступа (403): {msg}"),
         404 => format!("Не найдено (404): {msg}. Для токена нужны права Contents: Read and write на репозиторий."),
         422 => format!("GitHub отклонил запрос (422): {msg}"),
@@ -190,16 +191,32 @@ async fn fetch_meta(rev: String, l: Livery, cache: std::sync::Arc<Mutex<HashMap<
     l
 }
 
-#[tauri::command]
-async fn sync_remote(app: AppHandle, token: Option<String>) -> Result<RemoteData, String> {
-    // 1. SHA последнего коммита — raw-ссылки с SHA неизменяемы, CDN не отдаст устаревший файл
+fn worker_base(w: &Option<String>) -> Option<String> {
+    w.as_deref().map(|x| x.trim().trim_end_matches('/').to_string()).filter(|x| x.starts_with("http"))
+}
+
+type TreeData = (String, Vec<TreeEntry>, bool);
+
+/// Дерево репозитория через Worker (кэш на стороне Cloudflare, без лимита 60/час).
+async fn fetch_tree_worker(base: &str) -> Result<TreeData, String> {
+    let r = http().get(format!("{base}/tree")).send().await.map_err(err("Сервер недоступен"))?;
+    let st = r.status();
+    let body = r.text().await.map_err(err("Чтение ответа"))?;
+    let v: Value = serde_json::from_str(&body).map_err(err("Некорректный ответ сервера"))?;
+    if !st.is_success() {
+        return Err(v["error"].as_str().unwrap_or("Ошибка сервера").to_string());
+    }
+    let commit = v["commit"].as_str().unwrap_or("HEAD").to_string();
+    let entries: Vec<TreeEntry> = serde_json::from_value(v["tree"].clone()).map_err(err("Разбор дерева"))?;
+    Ok((commit, entries, v["truncated"].as_bool().unwrap_or(false)))
+}
+
+/// Прямой запрос к GitHub API (запасной путь).
+async fn fetch_tree_direct(token: &Option<String>) -> Result<TreeData, String> {
+    // SHA последнего коммита — raw-ссылки с SHA неизменяемы, CDN не отдаст устаревший файл
     let mut rev = "HEAD".to_string();
     let commit_url = format!("https://api.github.com/repos/{OWNER}/{REPO}/commits/HEAD");
-    if let Ok(r) = gh_headers(http().get(&commit_url), &token)
-        .header("Accept", "application/vnd.github.sha")
-        .send()
-        .await
-    {
+    if let Ok(r) = gh_headers(http().get(&commit_url), token).header("Accept", "application/vnd.github.sha").send().await {
         if r.status().is_success() {
             if let Ok(t) = r.text().await {
                 let t = t.trim().to_string();
@@ -209,25 +226,32 @@ async fn sync_remote(app: AppHandle, token: Option<String>) -> Result<RemoteData
             }
         }
     }
-
-    // 2. Всё дерево репозитория одним запросом
     let url = format!("https://api.github.com/repos/{OWNER}/{REPO}/git/trees/{rev}?recursive=1");
-    let resp = gh_headers(http().get(&url), &token)
-        .send()
-        .await
-        .map_err(err("Нет связи с GitHub"))?;
+    let resp = gh_headers(http().get(&url), token).send().await.map_err(err("Нет связи с GitHub"))?;
     let status = resp.status();
     let body = resp.text().await.map_err(err("Ошибка чтения ответа"))?;
     if !status.is_success() {
         return Err(http_error(status, &body));
     }
     let v: Value = serde_json::from_str(&body).map_err(err("Некорректный ответ GitHub"))?;
-    let truncated = v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false);
     let entries: Vec<TreeEntry> =
         serde_json::from_value(v.get("tree").cloned().unwrap_or(Value::Array(vec![]))).map_err(err("Разбор дерева"))?;
+    Ok((rev, entries, v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false)))
+}
+
+#[tauri::command]
+async fn sync_remote(app: AppHandle, token: Option<String>, worker: Option<String>) -> Result<RemoteData, String> {
+    let (rev, entries, truncated) = match worker_base(&worker) {
+        // при настроенном Worker ключ админа никогда не уходит в GitHub: запасной путь — без токена
+        Some(base) => match fetch_tree_worker(&base).await {
+            Ok(t) => t,
+            Err(_) => fetch_tree_direct(&None).await?,
+        },
+        None => fetch_tree_direct(&token).await?,
+    };
     let (liveries, models) = acc::parse_tree(&entries);
 
-    // 3. Метаданные машин (номер, кузов) — с кэшем по sha блоба
+    // Метаданные машин (номер, кузов) — с кэшем по sha блоба
     let cache_path = data_dir(&app)?.join("meta_cache.json");
     let cache: HashMap<String, CarMeta> =
         fs::read_to_string(&cache_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -418,8 +442,25 @@ async fn fetch_b64(url: String) -> Result<String, String> {
 
 // ───────────────────────── Команды: админка (GitHub REST) ─────────────────────────
 
+/// POST на Worker с ключом администратора.
+async fn worker_post(base: &str, key: &str, path: &str, body: Value) -> Result<Value, String> {
+    let r = http().post(format!("{base}{path}")).bearer_auth(key.trim()).json(&body).send().await.map_err(err("Сервер недоступен"))?;
+    let st = r.status();
+    let text = r.text().await.map_err(err("Чтение ответа"))?;
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if !st.is_success() {
+        return Err(v["error"].as_str().map(String::from).unwrap_or_else(|| format!("Сервер вернул {st}")));
+    }
+    Ok(v)
+}
+
+/// `token` — ключ администратора, если задан Worker, иначе персональный токен GitHub.
 #[tauri::command]
-async fn github_check_token(token: String) -> Result<Value, String> {
+async fn github_check_token(token: String, worker: Option<String>) -> Result<Value, String> {
+    if let Some(base) = worker_base(&worker) {
+        let v = worker_post(&base, &token, "/check", json!({})).await?;
+        return Ok(json!({ "login": v["name"].as_str().unwrap_or("admin"), "canPush": true }));
+    }
     let t = Some(token);
     let r = gh_headers(http().get("https://api.github.com/user"), &t).send().await.map_err(err("Сеть"))?;
     let st = r.status();
@@ -456,9 +497,13 @@ async fn current_sha(token: &Option<String>, path: &str) -> Result<Option<String
     Ok(serde_json::from_str::<Value>(&body).ok().and_then(|v| v["sha"].as_str().map(String::from)))
 }
 
-/// `PUT /repos/{owner}/{repo}/contents/{path}` — создаёт или обновляет файл.
+/// Создаёт или обновляет файл: через Worker (по ключу админа) или напрямую `PUT /repos/{owner}/{repo}/contents/{path}`.
 #[tauri::command]
-async fn github_put_file(token: String, path: String, content_b64: String, message: String) -> Result<String, String> {
+async fn github_put_file(token: String, path: String, content_b64: String, message: String, worker: Option<String>) -> Result<String, String> {
+    if let Some(base) = worker_base(&worker) {
+        let v = worker_post(&base, &token, "/put", json!({ "path": path, "content": content_b64, "message": message })).await?;
+        return Ok(v["sha"].as_str().unwrap_or("").to_string());
+    }
     let t = Some(token);
     let sha = current_sha(&t, &path).await?;
     let mut body = json!({ "message": message, "content": content_b64 });
@@ -476,7 +521,11 @@ async fn github_put_file(token: String, path: String, content_b64: String, messa
 }
 
 #[tauri::command]
-async fn github_delete_file(token: String, path: String, message: String) -> Result<(), String> {
+async fn github_delete_file(token: String, path: String, message: String, worker: Option<String>) -> Result<(), String> {
+    if let Some(base) = worker_base(&worker) {
+        worker_post(&base, &token, "/delete", json!({ "path": path, "message": message })).await?;
+        return Ok(());
+    }
     let t = Some(token);
     let Some(sha) = current_sha(&t, &path).await? else { return Ok(()) };
     let url = format!("https://api.github.com/repos/{OWNER}/{REPO}/contents/{}", enc_path(&path));

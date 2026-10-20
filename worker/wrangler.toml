@@ -1,0 +1,10 @@
+name = "dobeg-livery-proxy"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+OWNER = "kirillkoltun0-ops"
+REPO = "dobeg-liveries"
+# Секреты задаются командой/в панели, не здесь:
+#   wrangler secret put GH_TOKEN
+#   wrangler secret put ADMIN_KEYS

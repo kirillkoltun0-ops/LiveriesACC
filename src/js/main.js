@@ -2,12 +2,17 @@
 import { $, $$, esc, sleep, decodeText, parseJsonBuf, pick, bufToB64, strToB64, gitBlobSha, sha256Hex, safeName, fmtBytes, ls, previewDb } from './util.js';
 import { CARS, carName, matchModel } from './cars.js';
 import { Showroom, pruneModelCache } from './showroom.js';
+import { WORKER_URL } from './config.js';
 
 const T = window.__TAURI__;
 const invoke = (cmd, args) => T.core.invoke(cmd, args);
 // хеш пароля администратора (SHA-256 от «dobeg2026»). Это защита от случайного входа, а не от взлома:
 // реальная защита репозитория — это права GitHub-токена.
 const ADMIN_HASH = '62d1e13b49fbbd4d1a08650bc3d2847bcdf05b70b0d07717f39289d4c759199a';
+
+/** Адрес Worker: из настроек (для отладки) или вшитый в config.js. */
+const workerUrl = () => (ls.get('workerUrl') || WORKER_URL || '').trim();
+const usesWorker = () => !!workerUrl();
 
 const S = {
   customs: '', remote: null, installed: {}, previews: new Map(),
@@ -99,7 +104,7 @@ async function sync({ silent = false, auto = true } = {}) {
   S.syncing = true;
   setSync('busy', 'Синхронизация…');
   try {
-    const data = await invoke('sync_remote', { token: S.token || null });
+    const data = await invoke('sync_remote', { token: usesWorker() ? null : S.token || null, worker: workerUrl() || null });
     S.remote = data;
     ls.set('remoteCache', data);
     S.installed = await invoke('installed_state', { customs: S.customs });
@@ -555,6 +560,9 @@ function renderSettingsUI() {
   $('#setNavAdmin').hidden = !S.isAdmin;
   $('#tokenInfo').textContent = S.login ? `Подключено как ${S.login}` : S.token ? 'Токен сохранён' : 'Не указан';
   $('#readToken').value = S.token;
+  $('#workerInput').value = ls.get('workerUrl') || '';
+  $('#workerInput').placeholder = WORKER_URL || 'https://….workers.dev (необязательно)';
+  $('#readTokenField').hidden = usesWorker();
 }
 
 $('#btnSettings').onclick = () => { renderSettingsUI(); openModal('m-settings'); };
@@ -608,6 +616,7 @@ $('#btnPathSave').onclick = async () => {
   } catch (e) { toast('Путь недоступен', errText(e), 'bad', 6000); }
 };
 $('#btnOpen2').onclick = () => $('#btnOpen').click();
+$('#workerInput').addEventListener('change', (e) => { ls.set('workerUrl', e.target.value.trim()); S.login = ''; ls.set('ghLogin', ''); renderTokenUI(); renderSettingsUI(); sync({ auto: false }); });
 $('#readToken').addEventListener('change', (e) => { S.token = e.target.value.trim(); S.login = ''; ls.set('ghToken', S.token); ls.set('ghLogin', ''); renderTokenUI(); toast(S.token ? 'Токен сохранён' : 'Токен удалён', '', 'ok', 2000); });
 $('#btnForget').onclick = () => { S.dismissed.clear(); ls.set('dismissed', []); renderSettingsUI(); toast('Список сброшен', 'Автоустановка снова учитывает все ливреи.', 'ok', 3500); };
 $('#btnForgetToken').onclick = () => { S.token = ''; S.login = ''; ls.set('ghToken', ''); ls.set('ghLogin', ''); renderTokenUI(); renderSettingsUI(); };
@@ -624,7 +633,12 @@ const A = { items: [], publishing: false };
 function renderTokenUI() {
   const ok = !!(S.token && S.login);
   $('#tokenOk').hidden = !ok; $('#tokenForm').hidden = ok;
-  $('#tokenOkText').innerHTML = `✔ GitHub подключён как <b>${esc(S.login)}</b> · запись в репозиторий разрешена`;
+  $('#tokenOkText').innerHTML = usesWorker() ? `✔ Вы вошли как администратор <b>${esc(S.login)}</b>` : `✔ GitHub подключён как <b>${esc(S.login)}</b> · запись в репозиторий разрешена`;
+  $('#tokenTitle').textContent = usesWorker() ? 'Вход администратора' : 'Подключение к GitHub';
+  $('#tokenLabel').textContent = usesWorker() ? 'Ключ администратора (выдаёт владелец лиги)' : 'Токен (fine-grained: Contents → Read and write)';
+  $('#tokenInput').placeholder = usesWorker() ? 'ваш ключ' : 'github_pat_…';
+  $('#btnTokenSave').textContent = usesWorker() ? 'Войти' : 'Подключить';
+  $('#btnTokenChange').textContent = usesWorker() ? 'Сменить ключ' : 'Сменить токен';
   $('#tokenInput').value = S.token;
   refreshPublish();
 }
@@ -642,10 +656,10 @@ async function connectToken(t, silent) {
   if (!t) { S.login = ''; ls.set('ghLogin', ''); return renderTokenUI(); }
   $('#tokenState').innerHTML = '<span class="spin"></span>';
   try {
-    const r = await invoke('github_check_token', { token: t });
-    if (r.canPush) { S.login = r.login; ls.set('ghLogin', r.login); if (!silent) toast('GitHub подключён', r.login, 'ok'); }
+    const r = await invoke('github_check_token', { token: t, worker: workerUrl() || null });
+    if (r.canPush) { S.login = r.login; ls.set('ghLogin', r.login); if (!silent) toast(usesWorker() ? 'Вход выполнен' : 'GitHub подключён', r.login, 'ok'); }
     else { S.login = ''; $('#tokenState').textContent = `⚠ ${r.login}: нет права записи в репозиторий`; toast('Токен без прав записи', 'Нужно Contents: Read and write', 'warn', 6000); }
-  } catch (e) { S.login = ''; $('#tokenState').textContent = '✖ ' + errText(e); if (!silent) toast('Токен не подошёл', errText(e), 'bad', 7000); }
+  } catch (e) { S.login = ''; $('#tokenState').textContent = '✖ ' + errText(e); if (!silent) toast(usesWorker() ? 'Ключ не подошёл' : 'Токен не подошёл', errText(e), 'bad', 7000); }
   renderTokenUI();
 }
 $('#btnTokenSave').onclick = () => connectToken($('#tokenInput').value.trim());
@@ -750,7 +764,7 @@ async function ingest(list) {
   // полная автоматизация: всё валидно и GitHub подключён → публикуем без единого клика
   const ready = items.filter((i) => i.include && itemValid(i));
   if (S.cfg.autoPublish) {
-    if (!S.token || !S.login) toast('Подключите GitHub', 'Один раз вставьте токен в шаге 1 — дальше публикация пойдёт сама.', 'warn', 7000);
+    if (!S.token || !S.login) toast(usesWorker() ? 'Войдите как администратор' : 'Подключите GitHub', usesWorker() ? 'Один раз введите ключ в шаге 1 — дальше публикация пойдёт сама.' : 'Один раз вставьте токен в шаге 1 — дальше публикация пойдёт сама.', 'warn', 7000);
     else if (ready.length === items.length) setTimeout(() => publish(), 700);
     else toast('Нужна ваша помощь', 'Выберите кузов в чек-листе и нажмите «Опубликовать».', 'warn', 6000);
   }
@@ -816,7 +830,7 @@ $('#teamInput').addEventListener('input', refreshPublish);
 function refreshPublish() {
   const sel = A.items.filter((i) => i.include && itemValid(i));
   let info = '';
-  if (!S.token || !S.login) info = 'Подключите GitHub (шаг 1)';
+  if (!S.token || !S.login) info = usesWorker() ? 'Войдите как администратор (шаг 1)' : 'Подключите GitHub (шаг 1)';
   else if (!A.items.length) info = 'Перетащите папку с ливреей';
   else if (!sel.length) info = 'Нет скинов, готовых к публикации';
   else info = `Готово к публикации: ${sel.length}`;
@@ -904,7 +918,7 @@ async function publish() {
     let done = 0;
     for (const p of todo) {
       step.textContent = `Загрузка ${done + 1}/${todo.length}: ${p.path}`;
-      await invoke('github_put_file', { token: S.token, path: p.path, contentB64: p.b64 ?? bufToB64(p.buf), message: `${remote.has(p.path) ? 'Update' : 'Add'} ${p.path}` });
+      await invoke('github_put_file', { token: S.token, path: p.path, contentB64: p.b64 ?? bufToB64(p.buf), message: `${remote.has(p.path) ? 'Update' : 'Add'} ${p.path}`, worker: workerUrl() || null });
       done++; $('i', bar).style.width = `${Math.round((done / todo.length) * 100)}%`;
     }
     step.textContent = `Готово: загружено файлов — ${done}, без изменений — ${plan.length - done}`;
@@ -926,14 +940,14 @@ $('#btnPublish').onclick = publish;
 $('#repoRows').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-del]'); if (!b) return;
   const l = S.remote.liveries.find((x) => x.id === b.dataset.del); if (!l) return;
-  if (!S.token) return toast('Нужен токен', 'Введите GitHub-токен в шаге 1.', 'warn');
+  if (!S.token) return toast(usesWorker() ? 'Нужен вход' : 'Нужен токен', usesWorker() ? 'Введите ключ администратора в шаге 1.' : 'Введите GitHub-токен в шаге 1.', 'warn');
   if (!(await ask(`Удалить «${l.name}»?`, `Все файлы ливреи будут удалены из репозитория, и у пилотов она пропадёт при следующей проверке.`, 'Удалить'))) return;
   const paths = [...l.files.map((f) => f.path), ...(l.carFile ? [l.carFile.path] : []), ...(l.preview ? [l.preview.path] : []), ...(l.junkPaths ?? [])];
   const t = toast('Удаление из репозитория', l.name, 'info', 0).update(null, null, 0);
   try {
     let n = 0;
     for (const p of paths) {
-      await invoke('github_delete_file', { token: S.token, path: p, message: `Remove ${p}` });
+      await invoke('github_delete_file', { token: S.token, path: p, message: `Remove ${p}`, worker: workerUrl() || null });
       t.update(null, p, ++n / paths.length);
     }
     t.close(); toast('Удалено', l.name, 'ok');

@@ -375,11 +375,11 @@ table.t td:last-child{text-align:right}
     <section class="view" id="view-admin" hidden>
       <div class="admin-wrap">
         <div class="glass panel" id="tokenPanel">
-          <h3><span class="n">1</span> Подключение к GitHub <span class="chiplet">один раз</span></h3>
+          <h3><span class="n">1</span> <span id="tokenTitle">Подключение к GitHub</span> <span class="chiplet">один раз</span></h3>
           <div id="tokenOk" class="token-ok" hidden><span id="tokenOkText"></span><button class="btn sm" id="btnTokenChange">Сменить токен</button></div>
           <div id="tokenForm" class="two">
             <div>
-              <label class="f">Токен (fine-grained: Contents → Read and write)</label>
+              <label class="f" id="tokenLabel">Токен (fine-grained: Contents → Read and write)</label>
               <input id="tokenInput" class="input" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
             </div>
             <div style="display:flex;align-items:flex-end;gap:10px">
@@ -478,7 +478,8 @@ table.t td:last-child{text-align:right}
           <select class="input" data-cfg="syncMin"><option value="0">Выключено</option><option value="1">Каждую минуту</option><option value="5">Каждые 5 минут</option><option value="10">Каждые 10 минут</option><option value="30">Каждые 30 минут</option><option value="60">Раз в час</option></select></div>
         <div class="field"><span>Проверять при возврате в окно<small>Не чаще раза в минуту</small></span><label class="switch"><input type="checkbox" data-cfg="syncOnFocus"><i></i></label></div>
         <div class="field"><span>Уведомлять о новых ливреях</span><label class="switch"><input type="checkbox" data-cfg="notifyNew"><i></i></label></div>
-        <div class="field"><span>Токен GitHub для чтения<small>Необязательно: поднимает лимит API с 60 до 5000 запросов в час</small></span><input class="input" type="password" id="readToken" placeholder="github_pat_…" autocomplete="off"></div>
+        <div class="field"><span>Адрес сервера (Worker)<small>Если задан — токены GitHub не нужны вообще. Обычно вшит в приложение.</small></span><input class="input" id="workerInput" autocomplete="off" spellcheck="false"></div>
+        <div class="field" id="readTokenField"><span>Токен GitHub для чтения<small>Необязательно: поднимает лимит API с 60 до 5000 запросов в час</small></span><input class="input" type="password" id="readToken" placeholder="github_pat_…" autocomplete="off"></div>
         <div class="field"><span>Забытые удаления<small id="dismissInfo"></small></span><button class="btn sm" id="btnForget">Сбросить</button></div>
       </section>
 
