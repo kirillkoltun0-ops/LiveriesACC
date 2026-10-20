@@ -8,7 +8,6 @@ const invoke = (cmd, args) => T.core.invoke(cmd, args);
 // хеш пароля администратора (SHA-256 от «dobeg2026»). Это защита от случайного входа, а не от взлома:
 // реальная защита репозитория — это права GitHub-токена.
 const ADMIN_HASH = '62d1e13b49fbbd4d1a08650bc3d2847bcdf05b70b0d07717f39289d4c759199a';
-const SYNC_EVERY = 10 * 60 * 1000;
 
 const S = {
   customs: '', remote: null, installed: {}, previews: new Map(),
@@ -16,8 +15,23 @@ const S = {
   q: '', team: 'all', status: 'all',
   busy: new Set(), syncing: false, firstRender: true,
   dismissed: new Set(ls.get('dismissed', [])),
-  opt: { autoUpd: true, autoNew: true, ...ls.get('opt', {}) },
+  cfg: null, syncTimer: null, lastSyncAt: 0, login: ls.get('ghLogin', ''),
 };
+
+const DEFAULT_CFG = {
+  theme: 'dobeg', accent: null, anim: 'full', bgAnim: true, density: 'normal', scale: 100, tilt: true, blur: true,
+  autoUpd: true, autoNew: true, syncMin: 10, syncOnFocus: true, notifyNew: true,
+  showRotate: true, showBase: '#1c1f29', showQuality: 'auto', autoPreview: true,
+  autoPublish: true, adminPreview: true,
+};
+const old = ls.get('opt', {});
+S.cfg = { ...DEFAULT_CFG, ...(old.autoUpd != null ? { autoUpd: old.autoUpd, autoNew: old.autoNew } : {}), ...ls.get('cfg', {}) };
+const saveCfg = () => ls.set('cfg', S.cfg);
+
+const THEMES = [
+  ['dobeg', 'DOBEG Orange'], ['cyber', 'Neon Cyan'], ['rosso', 'Rosso Corsa'], ['brg', 'British Green'], ['synth', 'Synthwave'],
+  ['gold', 'Carbon Gold'], ['ice', 'Ice Blue'], ['sunset', 'Sunset'], ['stealth', 'Stealth'], ['frost', 'Frost (светлая)'],
+];
 
 // ───────────────────────── UI-примитивы ─────────────────────────
 function toast(title, msg = '', kind = 'info', ms = 4500) {
@@ -91,6 +105,8 @@ async function sync({ silent = false, auto = true } = {}) {
     S.installed = await invoke('installed_state', { customs: S.customs });
     const t = new Date();
     setSync('ok', `Синхронизировано ${t.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`);
+    S.lastSyncAt = Date.now();
+    notifyNewLiveries(data);
     render();
     renderAdmin();
     pruneModelCache(data.models.map((m) => m.sha));
@@ -105,10 +121,27 @@ async function sync({ silent = false, auto = true } = {}) {
   }
 }
 
+function notifyNewLiveries(data) {
+  const known = ls.get('knownIds');
+  const ids = data.liveries.map((l) => l.id);
+  ls.set('knownIds', ids);
+  if (!known || !S.cfg.notifyNew) return;           // первый запуск — не спамим
+  const fresh = data.liveries.filter((l) => !known.includes(l.id));
+  if (fresh.length) toast(fresh.length === 1 ? 'Новая ливрея' : `Новые ливреи: ${fresh.length}`, fresh.slice(0, 3).map((l) => l.name).join(', '), 'ok', 6000);
+}
+
+function scheduleSync() {
+  clearInterval(S.syncTimer);
+  if (S.cfg.syncMin > 0) S.syncTimer = setInterval(() => sync({ silent: true }), S.cfg.syncMin * 60000);
+}
+window.addEventListener('focus', () => {
+  if (S.cfg.syncOnFocus && S.remote && Date.now() - S.lastSyncAt > 60000) sync({ silent: true });
+});
+
 async function autoInstall() {
   const list = S.remote.liveries.filter((l) => {
     const s = statusOf(l);
-    return (s === 'update' && S.opt.autoUpd) || (s === 'new' && S.opt.autoNew && !S.dismissed.has(l.id));
+    return (s === 'update' && S.cfg.autoUpd) || (s === 'new' && S.cfg.autoNew && !S.dismissed.has(l.id));
   });
   if (list.length) await installMany(list, 'Автообновление');
 }
@@ -170,16 +203,24 @@ function filtered() {
     (!q || haystack(l).includes(q)));
 }
 
+/** Локальный снимок (если актуален) → превью из репозитория → устаревший локальный. */
+function previewUrl(l) {
+  const loc = S.previews.get(l.id);
+  if (loc && loc.sig === l.sig) return loc.url;
+  if (l.preview) return rawUrl(l.preview.path);
+  return loc?.url ?? null;
+}
+
 function cardHTML(l, i, animate) {
   const st = statusOf(l), busy = S.busy.has(l.id), m = l.meta;
-  const pv = S.previews.get(l.id);
+  const pv = previewUrl(l);
   const pill = { ok: ['ok', 'Установлено'], update: ['update', 'Есть обновление'], new: ['new', 'Не установлено'] }[st];
   const main = st === 'new' ? `<button class="btn primary" data-act="install">Установить</button>`
     : st === 'update' ? `<button class="btn primary" data-act="install">Обновить</button><button class="btn danger icon" data-act="remove" title="Удалить">✕</button>`
     : `<button class="btn" data-act="show">3D-шоурум</button><button class="btn danger icon" data-act="remove" title="Удалить">✕</button>`;
   return `<article class="card ${animate ? '' : 'noanim'} ${busy ? 'busy' : ''}" data-id="${esc(l.id)}" style="--i:${i}">
     <div class="thumb" data-act="show">
-      ${pv ? `<img src="${pv.url}" alt="" draggable="false">` : `<div class="ph">${CAR_SVG}<span>3D-превью появится после открытия</span></div>`}
+      ${pv ? `<img src="${esc(pv)}" alt="" draggable="false">` : `<div class="ph">${CAR_SVG}<span>3D-превью появится после открытия</span></div>`}
       ${m?.raceNumber > 0 ? `<span class="num">#${m.raceNumber}</span>` : ''}
       <span class="pill ${pill[0]}">${pill[1]}</span>
       <button class="btn sm view3d" data-act="show">▶ 3D</button>
@@ -236,6 +277,12 @@ function patchCard(id) {
   el.replaceWith(t.firstElementChild);
 }
 
+$('#grid').addEventListener('error', (e) => {      // превью из GitHub не загрузилось — показываем заглушку
+  if (e.target.tagName !== 'IMG') return;
+  const ph = document.createElement('div'); ph.className = 'ph'; ph.innerHTML = `${CAR_SVG}<span>Нет превью</span>`;
+  e.target.replaceWith(ph);
+}, true);
+
 // Прогресс установки из Rust
 T.event.listen('install-progress', (ev) => {
   const { id, done, total } = ev.payload;
@@ -246,6 +293,7 @@ T.event.listen('install-progress', (ev) => {
 // 3D-tilt и подсветка карточек
 let lastTilt = null;
 $('#grid').addEventListener('pointermove', (e) => {
+  if (!S.cfg.tilt) return;
   const c = e.target.closest('.card');
   if (lastTilt && lastTilt !== c) { lastTilt.style.setProperty('--rx', '0deg'); lastTilt.style.setProperty('--ry', '0deg'); }
   lastTilt = c;
@@ -301,8 +349,8 @@ $('#btnRemoveAll').onclick = async () => {
 // ───────────────────────── 3D-шоурум ─────────────────────────
 let show = null, cur = null, flipOn = false, spin = true;
 
-function chooseModel(l) {
-  const models = S.remote.models, t = l.meta?.carModelType;
+function chooseModel(l, typeOverride) {
+  const models = S.remote.models, t = typeOverride ?? l.meta?.carModelType;
   const saved = t != null && ls.get('model:' + t);
   return (saved && models.find((m) => m.path === saved)) || (t != null ? matchModel(t, models) : null);
 }
@@ -321,7 +369,9 @@ async function openShow(id) {
   openModal('m-show');
   try { show ??= new Showroom($('#glcanvas')); } catch (e) { toast('WebGL недоступен', errText(e), 'bad'); closeModal('m-show'); return; }
   show.resize(); show.start();
+  spin = S.cfg.showRotate; $('#shRotate').classList.toggle('primary', !spin);
   show.setFlipY(!flipOn); show.setAutoRotate(spin);
+  show.setQuality(S.cfg.showQuality); show.setBaseColor(S.cfg.showBase); $('#shBase').value = S.cfg.showBase; syncAccent();
   updateShowInstallBtn();
 
   const models = S.remote.models, sel = $('#shModel');
@@ -347,7 +397,7 @@ async function loadShow(model) {
     setLoader(false);
     if (my === cur) {
       const pv = S.previews.get(l.id);
-      if (!pv || pv.sig !== l.sig) { await sleep(350); if (my === cur) await savePreview(true); } // авто-превью при первом показе
+      if (S.cfg.autoPreview && (!pv || pv.sig !== l.sig)) { await sleep(350); if (my === cur) await savePreview(true); } // авто-превью при первом показе
     }
   } catch (e) {
     setLoader(false);
@@ -454,12 +504,92 @@ $('#loginForm').addEventListener('submit', async (e) => {
   }
 });
 
-// ───────────────────────── Настройки ─────────────────────────
-$('#btnSettings').onclick = () => {
-  $('#pathInput').value = S.customs;
-  $('#optAutoUpd').checked = S.opt.autoUpd; $('#optAutoNew').checked = S.opt.autoNew;
-  openModal('m-settings');
+// ───────────────────────── Темы и настройки ─────────────────────────
+const lighten = (hex, k = 0.35) => {
+  const n = parseInt(hex.slice(1), 16), ch = [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (255 - v) * k));
+  return '#' + ch.map((v) => v.toString(16).padStart(2, '0')).join('');
 };
+
+function syncAccent() {
+  const c = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim();
+  if (c) show?.setAccent(c);
+}
+
+function applyCfg() {
+  const r = document.documentElement, c = S.cfg;
+  r.dataset.anim = c.anim; r.dataset.blur = c.blur ? 'on' : 'off'; r.dataset.bgfx = c.bgAnim ? 'on' : 'off'; r.dataset.density = c.density;
+  if (c.accent) { r.style.setProperty('--acc', c.accent); r.style.setProperty('--acc2', lighten(c.accent)); }
+  else { r.style.removeProperty('--acc'); r.style.removeProperty('--acc2'); }
+  try { T.webview.getCurrentWebview().setZoom(c.scale / 100); } catch { /* нет права/API — не критично */ }
+  show?.setQuality(c.showQuality);
+  syncAccent();
+}
+
+/** Смена темы: круговое «проявление» от точки клика (View Transitions) или плавный фейд цветов. */
+function applyTheme(name, ev) {
+  const r = document.documentElement;
+  const commit = () => { r.dataset.theme = name; syncAccent(); };
+  if (r.dataset.theme === name) return;
+  if (S.cfg.anim === 'off') return commit();
+  if (document.startViewTransition && S.cfg.anim === 'full') {
+    r.style.setProperty('--tx', `${ev?.clientX ?? innerWidth / 2}px`);
+    r.style.setProperty('--ty', `${ev?.clientY ?? innerHeight / 2}px`);
+    document.startViewTransition(commit);
+  } else {
+    r.classList.add('theme-fade'); commit();
+    setTimeout(() => r.classList.remove('theme-fade'), 800);
+  }
+}
+
+function renderSettingsUI() {
+  $('#themes').innerHTML = THEMES.map(([id, name]) => `<button class="theme ${S.cfg.theme === id ? 'on' : ''}" data-id="${id}"><div class="sw" data-theme="${id}"></div><b>${name}</b></button>`).join('');
+  $$('#m-settings [data-cfg]').forEach((el) => {
+    const v = S.cfg[el.dataset.cfg];
+    if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
+  });
+  $$('#m-settings .seg').forEach((sg) => $$('button', sg).forEach((b) => b.classList.toggle('on', S.cfg[sg.dataset.seg] === b.dataset.val)));
+  $('#accentPick').value = S.cfg.accent || '#ff5500';
+  $('#scaleVal').textContent = `${S.cfg.scale}%`;
+  $('#pathInput').value = S.customs;
+  $('#dismissInfo').textContent = S.dismissed.size ? `Скрыто от автоустановки: ${S.dismissed.size}` : 'Список пуст';
+  $('#setNavAdmin').hidden = !S.isAdmin;
+  $('#tokenInfo').textContent = S.login ? `Подключено как ${S.login}` : S.token ? 'Токен сохранён' : 'Не указан';
+  $('#readToken').value = S.token;
+}
+
+$('#btnSettings').onclick = () => { renderSettingsUI(); openModal('m-settings'); };
+$('.set-nav').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-pane]'); if (!b) return;
+  $$('.set-nav [data-pane]').forEach((x) => x.classList.toggle('on', x === b));
+  $$('.set-pane').forEach((x) => x.classList.toggle('on', x.dataset.pane === b.dataset.pane));
+});
+$('#themes').addEventListener('click', (e) => {
+  const t = e.target.closest('.theme'); if (!t) return;
+  S.cfg.theme = t.dataset.id; saveCfg(); applyTheme(S.cfg.theme, e);
+  $$('#themes .theme').forEach((x) => x.classList.toggle('on', x === t));
+});
+$('#accentPick').addEventListener('input', (e) => { S.cfg.accent = e.target.value; saveCfg(); applyCfg(); });
+$('#accentReset').onclick = () => { S.cfg.accent = null; saveCfg(); applyCfg(); };
+$('#m-settings').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg button'); if (!b) return;
+  const sg = b.parentElement; S.cfg[sg.dataset.seg] = b.dataset.val; saveCfg(); applyCfg();
+  $$('button', sg).forEach((x) => x.classList.toggle('on', x === b));
+});
+const onCfgInput = (e) => {
+  const el = e.target.closest('[data-cfg]'); if (!el) return;
+  const k = el.dataset.cfg;
+  S.cfg[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' || k === 'syncMin' ? +el.value : el.value;
+  saveCfg();
+  if (k === 'scale') $('#scaleVal').textContent = `${S.cfg.scale}%`;
+  if (e.type === 'change' || el.type !== 'range') {
+    if (k === 'syncMin') scheduleSync();
+    if (k === 'showBase') show?.setBaseColor(S.cfg.showBase);
+    applyCfg();
+  }
+};
+$('#m-settings').addEventListener('input', onCfgInput);
+$('#m-settings').addEventListener('change', onCfgInput);
+
 $('#btnBrowse').onclick = async () => {
   try {
     const p = await T.dialog.open({ directory: true, multiple: false, defaultPath: $('#pathInput').value || undefined, title: 'Папка Customs' });
@@ -467,43 +597,59 @@ $('#btnBrowse').onclick = async () => {
   } catch (e) { toast('Диалог недоступен', errText(e), 'bad'); }
 };
 $('#btnPathReset').onclick = async () => { $('#pathInput').value = await invoke('default_customs_path'); };
-$('#btnSettingsSave').onclick = async () => {
-  S.opt = { autoUpd: $('#optAutoUpd').checked, autoNew: $('#optAutoNew').checked }; ls.set('opt', S.opt);
+$('#btnPathSave').onclick = async () => {
   const p = $('#pathInput').value.trim();
-  if (p && p !== S.customs) {
-    try {
-      await invoke('ensure_customs', { customs: p });
-      S.customs = p; ls.set('customs', p);
-      S.installed = await invoke('installed_state', { customs: p });
-      render();
-    } catch (e) { return toast('Путь недоступен', errText(e), 'bad', 6000); }
-  }
-  closeModal('m-settings'); toast('Настройки сохранены', '', 'ok', 2000);
+  if (!p || p === S.customs) return;
+  try {
+    await invoke('ensure_customs', { customs: p });
+    S.customs = p; ls.set('customs', p);
+    S.installed = await invoke('installed_state', { customs: p });
+    render(); toast('Путь применён', p, 'ok', 3000);
+  } catch (e) { toast('Путь недоступен', errText(e), 'bad', 6000); }
+};
+$('#btnOpen2').onclick = () => $('#btnOpen').click();
+$('#readToken').addEventListener('change', (e) => { S.token = e.target.value.trim(); S.login = ''; ls.set('ghToken', S.token); ls.set('ghLogin', ''); renderTokenUI(); toast(S.token ? 'Токен сохранён' : 'Токен удалён', '', 'ok', 2000); });
+$('#btnForget').onclick = () => { S.dismissed.clear(); ls.set('dismissed', []); renderSettingsUI(); toast('Список сброшен', 'Автоустановка снова учитывает все ливреи.', 'ok', 3500); };
+$('#btnForgetToken').onclick = () => { S.token = ''; S.login = ''; ls.set('ghToken', ''); ls.set('ghLogin', ''); renderTokenUI(); renderSettingsUI(); };
+$('#btnClrPrev').onclick = async () => { await previewDb.clear(); S.previews.clear(); render(); toast('Превью очищены', '', 'ok', 2000); };
+$('#btnClrModels').onclick = async () => { try { await caches.delete('dobeg-models-v1'); toast('Кэш моделей очищен', '', 'ok', 2000); } catch { toast('Кэш недоступен', '', 'warn'); } };
+$('#btnResetCfg').onclick = async () => {
+  if (!(await ask('Сбросить настройки?', 'Тема, интервалы, масштаб и остальные параметры вернутся к значениям по умолчанию.', 'Сбросить'))) return;
+  S.cfg = { ...DEFAULT_CFG }; saveCfg(); applyCfg(); applyTheme(S.cfg.theme); scheduleSync(); renderSettingsUI();
 };
 
 // ───────────────────────── Админ-панель ─────────────────────────
 const A = { items: [], publishing: false };
 
-function renderAdmin() {
+function renderTokenUI() {
+  const ok = !!(S.token && S.login);
+  $('#tokenOk').hidden = !ok; $('#tokenForm').hidden = ok;
+  $('#tokenOkText').innerHTML = `✔ GitHub подключён как <b>${esc(S.login)}</b> · запись в репозиторий разрешена`;
   $('#tokenInput').value = S.token;
+  refreshPublish();
+}
+
+function renderAdmin() {
+  renderTokenUI();
   const rows = (S.remote?.liveries ?? []).map((l) => `<tr><td>${esc(teamLabel(l.team))}</td><td>${esc(l.name)}</td>
-    <td>${l.files.length + (l.carFile ? 1 : 0)}${l.junkCount ? ` <span class="muted">(+${l.junkCount} мусор)</span>` : ''}</td>
+    <td>${l.files.length + (l.carFile ? 1 : 0)}${l.preview ? ' <span class="chiplet">превью</span>' : ''}${l.junkCount ? ` <span class="muted">(+${l.junkCount} мусор)</span>` : ''}</td>
     <td><button class="btn sm danger" data-del="${esc(l.id)}">Удалить из репозитория</button></td></tr>`).join('');
   $('#repoRows').innerHTML = rows || `<tr><td colspan="4" class="muted">Пусто</td></tr>`;
 }
 
-$('#btnTokenSave').onclick = async () => {
-  const t = $('#tokenInput').value.trim();
+async function connectToken(t, silent) {
   S.token = t; ls.set('ghToken', t);
-  if (!t) { $('#tokenState').textContent = 'Токен удалён'; return refreshPublish(); }
+  if (!t) { S.login = ''; ls.set('ghLogin', ''); return renderTokenUI(); }
   $('#tokenState').innerHTML = '<span class="spin"></span>';
   try {
     const r = await invoke('github_check_token', { token: t });
-    $('#tokenState').textContent = r.canPush ? `✔ ${r.login} · запись разрешена` : `⚠ ${r.login} · нет права записи в репозиторий`;
-    toast(r.canPush ? 'Токен принят' : 'Токен без прав записи', r.login, r.canPush ? 'ok' : 'warn');
-  } catch (e) { $('#tokenState').textContent = '✖ ' + errText(e); }
-  refreshPublish();
-};
+    if (r.canPush) { S.login = r.login; ls.set('ghLogin', r.login); if (!silent) toast('GitHub подключён', r.login, 'ok'); }
+    else { S.login = ''; $('#tokenState').textContent = `⚠ ${r.login}: нет права записи в репозиторий`; toast('Токен без прав записи', 'Нужно Contents: Read and write', 'warn', 6000); }
+  } catch (e) { S.login = ''; $('#tokenState').textContent = '✖ ' + errText(e); if (!silent) toast('Токен не подошёл', errText(e), 'bad', 7000); }
+  renderTokenUI();
+}
+$('#btnTokenSave').onclick = () => connectToken($('#tokenInput').value.trim());
+$('#btnTokenChange').onclick = () => { S.login = ''; renderTokenUI(); $('#tokenInput').focus(); };
 
 // — сбор файлов из drag&drop и <input webkitdirectory> —
 async function walkEntry(entry, base, out) {
@@ -520,24 +666,30 @@ async function walkEntry(entry, base, out) {
   }
 }
 
+async function collectDrop(e) {
+  const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean); // синхронно, до await
+  const out = [];
+  for (const en of entries) await walkEntry(en, '', out);
+  return out;
+}
 const drop = $('#drop');
 drop.onclick = () => $('#dirInput').click();
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove('over')));
-drop.addEventListener('drop', async (e) => {
-  e.preventDefault();
-  const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean); // синхронно, до await
-  const out = [];
-  for (const en of entries) await walkEntry(en, '', out);
-  await ingest(out);
-});
+drop.addEventListener('drop', async (e) => { e.preventDefault(); await ingest(await collectDrop(e)); });
 $('#dirInput').addEventListener('change', async (e) => {
   const list = [...e.target.files].map((f) => ({ path: f.webkitRelativePath || f.name, file: f }));
   e.target.value = '';
   await ingest(list);
 });
 document.addEventListener('dragover', (e) => e.preventDefault());
-document.addEventListener('drop', (e) => e.preventDefault());
+// админ может бросить папку в любое место окна — лаунчер сам перейдёт в админ-панель
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  if (!S.isAdmin || e.target.closest('#drop')) return;
+  switchView('admin');
+  await ingest(await collectDrop(e));
+});
 
 const lc = (s) => s.toLowerCase();
 const extOf = (n) => (n.includes('.') ? lc(n.split('.').pop()) : '');
@@ -587,13 +739,33 @@ async function ingest(list) {
     }
     if (it.car?.carModelType != null) it.model = String(it.car.carModelType);
     if (it.car?.raceNumber != null) it.race = String(it.car.raceNumber);
+    it.team = autoTeam(it);
     items.push(it);
   }
   A.items = items;
   renderItems();
   const dds = items.reduce((s, i) => s + i.junk.length, 0);
   toast(`Найдено скинов: ${items.length}`, dds ? `Отфильтровано мусорных файлов: ${dds}` : 'Проверьте чек-лист ниже', 'info', 3500);
+
+  // полная автоматизация: всё валидно и GitHub подключён → публикуем без единого клика
+  const ready = items.filter((i) => i.include && itemValid(i));
+  if (S.cfg.autoPublish) {
+    if (!S.token || !S.login) toast('Подключите GitHub', 'Один раз вставьте токен в шаге 1 — дальше публикация пойдёт сама.', 'warn', 7000);
+    else if (ready.length === items.length) setTimeout(() => publish(), 700);
+    else toast('Нужна ваша помощь', 'Выберите кузов в чек-листе и нажмите «Опубликовать».', 'warn', 6000);
+  }
 }
+
+const GENERIC_DIRS = ['liveries', 'customs', 'cars', 'skins', 'dobeg'];
+/** Команда: teamName из конфига авто → родительская папка (если не служебная) → последняя использованная. */
+function autoTeam(it) {
+  const t = String(pick(it.car?.json, 'teamName') ?? '').trim();
+  if (t) return safeName(t);
+  const segs = it.dir.split('/');
+  if (segs.length >= 2 && !GENERIC_DIRS.includes(lc(segs[segs.length - 2]))) return safeName(segs[segs.length - 2]);
+  return ls.get('lastTeam', '') || '';
+}
+const effTeam = (it) => safeName($('#teamInput').value) || it.team || '';
 
 function itemChecks(it) {
   const c = [];
@@ -618,14 +790,14 @@ function itemChecks(it) {
   return c;
 }
 
-const itemValid = (it) => (!!it.files['decals.png'] || !!it.files['sponsors.png']) && (it.car?.carModelType != null || it.model !== '');
+const itemValid = (it) => (!!it.files['decals.png'] || !!it.files['sponsors.png']) && (it.car?.carModelType != null || it.model !== '') && lc(effTeam(it)) !== 'models';
 
 function renderItems() {
   $('#items').innerHTML = A.items.map((it, idx) => {
     const ok = itemValid(it);
     return `<div class="item ${ok ? '' : 'bad'}" data-idx="${idx}">
       <header><label class="switch" style="border:0;padding:0;gap:10px"><input type="checkbox" data-f="include" ${it.include ? 'checked' : ''}><i></i></label>
-      <h4>${esc(it.name)}</h4><span class="tiny muted">${esc(it.dir)}</span></header>
+      <h4>${esc(it.name)}</h4><span class="chiplet">→ ${esc(effTeam(it) ? effTeam(it) + '/' : '')}${esc(it.name)}</span></header>
       <ul class="checks">${itemChecks(it).map(([k, h]) => `<li class="${k}"><div class="grow">${h}</div></li>`).join('')}</ul></div>`;
   }).join('');
   refreshPublish();
@@ -643,15 +815,14 @@ $('#teamInput').addEventListener('input', refreshPublish);
 
 function refreshPublish() {
   const sel = A.items.filter((i) => i.include && itemValid(i));
-  const team = safeName($('#teamInput').value);
   let info = '';
-  if (!S.token) info = 'Введите GitHub-токен (шаг 1)';
-  else if (!A.items.length) info = 'Выберите папку со скином';
+  if (!S.token || !S.login) info = 'Подключите GitHub (шаг 1)';
+  else if (!A.items.length) info = 'Перетащите папку с ливреей';
   else if (!sel.length) info = 'Нет скинов, готовых к публикации';
-  else if (lc(team) === 'models') info = 'Имя команды «models» зарезервировано';
-  else info = `Будет опубликовано скинов: ${sel.length}${team ? ` → ${team}/` : ' → корень репозитория'}`;
+  else info = `Готово к публикации: ${sel.length}`;
   $('#publishInfo').textContent = info;
-  $('#btnPublish').disabled = A.publishing || !S.token || !sel.length || lc(team) === 'models';
+  $('#btnPublish').disabled = A.publishing || !S.token || !S.login || !sel.length;
+  $$('#items .chiplet').forEach((c, i) => { const it = A.items[i]; if (it) c.textContent = `→ ${effTeam(it) ? effTeam(it) + '/' : ''}${it.name}`; });
 }
 
 function buildCarConfig(it) {
@@ -666,22 +837,64 @@ function buildCarConfig(it) {
   return new TextEncoder().encode(JSON.stringify(base, null, 2));
 }
 
-$('#btnPublish').onclick = async () => {
-  const team = safeName($('#teamInput').value);
+/** Скрытый рендерер для превью (админ: перед заливкой; пилот: пакетная генерация). */
+function hiddenShowroom() {
+  const holder = document.createElement('div');
+  Object.assign(holder.style, { position: 'fixed', left: '-9999px', top: '0', width: '800px', height: '450px' });
+  holder.innerHTML = '<canvas></canvas>';
+  document.body.append(holder);
+  const sr = new Showroom($('canvas', holder), { interactive: false });
+  sr.setQuality('1'); sr.resize();
+  const dispose = sr.dispose.bind(sr);
+  sr.dispose = () => { dispose(); holder.remove(); };
+  return sr;
+}
+
+const b64ToBuf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+
+/** 3D-обложка из локальных файлов скина → base64 webp (или null, если модель не подобрана). */
+async function renderAdminPreview(sr, it) {
+  const t = it.car?.carModelType ?? (it.model !== '' ? +it.model : null);
+  const models = S.remote?.models ?? [];
+  const m = t != null && models.length ? (ls.get('model:' + t) && models.find((x) => x.path === ls.get('model:' + t))) || matchModel(t, models) : null;
+  if (!m) return null;
+  const urls = {};
+  for (const n of ['decals.png', 'sponsors.png', 'decals.json', 'sponsors.json']) if (it.files[n]) urls[n] = URL.createObjectURL(it.files[n]);
+  try {
+    await sr.setModel({ url: rawUrl(m.path), name: m.name, sha: m.sha });
+    await sr.setLivery({ decals: urls['decals.png'], sponsors: urls['sponsors.png'], decalsJson: urls['decals.json'], sponsorsJson: urls['sponsors.json'] });
+    await sleep(80);
+    const d = sr.capture();
+    return d.startsWith('data:image/webp') ? d.split(',')[1] : null;
+  } finally { Object.values(urls).forEach((u) => URL.revokeObjectURL(u)); }
+}
+
+async function publish() {
+  if (A.publishing) return;
   const sel = A.items.filter((i) => i.include && itemValid(i));
+  if (!sel.length || !S.token) return;
   const bar = $('#pubBar'), step = $('#pubStep');
   A.publishing = true; refreshPublish();
   bar.hidden = false; $('i', bar).style.width = '0%';
+  let sr = null;
   try {
-    // 1. подготовка и сравнение с репозиторием по git-sha — неизменённое не заливаем
+    // 1. план: файлы скина + car_config.json + 3D-превью
     const remote = new Map();
-    for (const l of S.remote?.liveries ?? []) for (const f of [...l.files, l.carFile].filter(Boolean)) remote.set(f.path, f.sha);
+    for (const l of S.remote?.liveries ?? []) for (const f of [...l.files, l.carFile, l.preview].filter(Boolean)) remote.set(f.path, f.sha);
     const plan = [];
-    for (const it of sel) {
-      const prefix = `${team ? team + '/' : ''}${safeName(it.name)}/`;
-      const files = Object.entries(it.files).map(([n, f]) => [n, f]);
-      for (const [n, f] of files) plan.push({ it, path: prefix + n, buf: await f.arrayBuffer() });
-      plan.push({ it, path: prefix + 'car_config.json', buf: buildCarConfig(it) });
+    for (const [n, it] of sel.entries()) {
+      const prefix = `${effTeam(it) ? effTeam(it) + '/' : ''}${safeName(it.name)}/`;
+      step.textContent = `Подготовка ${n + 1}/${sel.length}: ${it.name}`;
+      for (const [fname, f] of Object.entries(it.files)) plan.push({ path: prefix + fname, buf: await f.arrayBuffer() });
+      plan.push({ path: prefix + 'car_config.json', buf: buildCarConfig(it) });
+      if (S.cfg.adminPreview) {
+        try {
+          step.textContent = `Рисую 3D-превью: ${it.name}`;
+          sr ??= hiddenShowroom();
+          const b64 = await renderAdminPreview(sr, it);
+          if (b64) plan.push({ path: prefix + 'preview.webp', buf: b64ToBuf(b64), b64 });
+        } catch { /* превью — приятный бонус, публикацию не блокируем */ }
+      }
     }
     for (const p of plan) p.same = remote.get(p.path) === (await gitBlobSha(p.buf));
     const todo = plan.filter((p) => !p.same);
@@ -691,28 +904,31 @@ $('#btnPublish').onclick = async () => {
     let done = 0;
     for (const p of todo) {
       step.textContent = `Загрузка ${done + 1}/${todo.length}: ${p.path}`;
-      await invoke('github_put_file', { token: S.token, path: p.path, contentB64: bufToB64(p.buf), message: `${remote.has(p.path) ? 'Update' : 'Add'} ${p.path}` });
+      await invoke('github_put_file', { token: S.token, path: p.path, contentB64: p.b64 ?? bufToB64(p.buf), message: `${remote.has(p.path) ? 'Update' : 'Add'} ${p.path}` });
       done++; $('i', bar).style.width = `${Math.round((done / todo.length) * 100)}%`;
     }
     step.textContent = `Готово: загружено файлов — ${done}, без изменений — ${plan.length - done}`;
-    toast('Опубликовано', `Ливрей: ${sel.length} · файлов: ${done}`, 'ok', 6000);
+    toast('Опубликовано', `Ливрей: ${sel.length} · файлов: ${done}. Пилоты получат её при ближайшей проверке.`, 'ok', 7000);
+    const lastTeam = effTeam(sel[sel.length - 1]); if (lastTeam) ls.set('lastTeam', lastTeam);
     A.items = []; renderItems();
     await sync({ silent: true, auto: false });
   } catch (e) {
     step.textContent = '✖ ' + errText(e);
     toast('Ошибка публикации', errText(e), 'bad', 9000);
   } finally {
+    sr?.dispose();
     A.publishing = false; refreshPublish();
     setTimeout(() => { bar.hidden = true; }, 2500);
   }
-};
+}
+$('#btnPublish').onclick = publish;
 
 $('#repoRows').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-del]'); if (!b) return;
   const l = S.remote.liveries.find((x) => x.id === b.dataset.del); if (!l) return;
   if (!S.token) return toast('Нужен токен', 'Введите GitHub-токен в шаге 1.', 'warn');
   if (!(await ask(`Удалить «${l.name}»?`, `Все файлы ливреи будут удалены из репозитория, и у пилотов она пропадёт при следующей проверке.`, 'Удалить'))) return;
-  const paths = [...l.files.map((f) => f.path), ...(l.carFile ? [l.carFile.path] : []), ...(l.junkPaths ?? [])];
+  const paths = [...l.files.map((f) => f.path), ...(l.carFile ? [l.carFile.path] : []), ...(l.preview ? [l.preview.path] : []), ...(l.junkPaths ?? [])];
   const t = toast('Удаление из репозитория', l.name, 'info', 0).update(null, null, 0);
   try {
     let n = 0;
@@ -727,6 +943,7 @@ $('#repoRows').addEventListener('click', async (e) => {
 
 // ───────────────────────── Запуск ─────────────────────────
 async function boot() {
+  applyCfg(); document.documentElement.dataset.theme = S.cfg.theme;
   applyRole();
   // мгновенная отрисовка из кэша, пока идёт сетевая синхронизация
   const cached = ls.get('remoteCache');
@@ -737,7 +954,8 @@ async function boot() {
   if (cached?.liveries) S.remote = cached;
   render(true);
   renderAdmin();
+  scheduleSync();
+  if (S.token && !S.login) connectToken(S.token, true);
   await sync();
-  setInterval(() => sync({ silent: true }), SYNC_EVERY);
 }
 boot().catch((e) => toast('Критическая ошибка запуска', errText(e), 'bad', 0));

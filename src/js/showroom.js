@@ -104,6 +104,7 @@ export class Showroom {
     key.position.set(4, 7, 5);
     const rim = new THREE.DirectionalLight(0xff5500, 1.4);
     rim.position.set(-6, 3, -5);
+    this.rim = rim;
     this.scene.add(key, rim, new THREE.HemisphereLight(0x9db4ff, 0x14161d, 0.5));
 
     // «тень» под машиной
@@ -167,6 +168,10 @@ export class Showroom {
     loop();
   }
   stop() { this.running = false; cancelAnimationFrame(this._raf); }
+
+  /** Цвет контровой подсветки = акцент темы. */
+  setAccent(css) { try { this.rim.color.set(css); } catch { /* неподдерживаемый формат цвета */ } }
+  setQuality(q) { this.r.setPixelRatio(q === 'auto' ? Math.min(window.devicePixelRatio || 1, 2) : +q); this.resize(); }
 
   setAutoRotate(v) { this.controls.autoRotate = v; }
   setBaseColor(hex) { this.baseColor = hex; this.compose(); }

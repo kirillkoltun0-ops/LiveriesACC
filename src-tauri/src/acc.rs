@@ -36,6 +36,9 @@ pub struct Livery {
     pub junk_paths: Vec<String>,
     pub sig: String,
     pub car_file: Option<RemoteFile>,
+    /// preview.webp — 3D-обложка, которую заливает админ-панель. В установку и sig не входит.
+    #[serde(default)]
+    pub preview: Option<RemoteFile>,
     #[serde(default)]
     pub meta: Option<CarMeta>,
 }
@@ -213,6 +216,7 @@ pub fn parse_tree(entries: &[TreeEntry]) -> (Vec<Livery>, Vec<ModelFile>) {
 
         let mut keep = Vec::new();
         let mut car_file: Option<RemoteFile> = None;
+        let mut preview: Option<RemoteFile> = None;
         let mut junk: Vec<String> = Vec::new();
         for f in &files {
             let fname = f.path.rsplit('/').next().unwrap_or("").to_string();
@@ -222,7 +226,9 @@ pub fn parse_tree(entries: &[TreeEntry]) -> (Vec<Livery>, Vec<ModelFile>) {
                 sha: f.sha.clone(),
                 size: f.size.unwrap_or(0),
             };
-            if is_junk(&fname) {
+            if fname.eq_ignore_ascii_case("preview.webp") {
+                preview = Some(rf);
+            } else if is_junk(&fname) {
                 junk.push(f.path.clone());
             } else if is_skin_file(&fname) {
                 keep.push(rf);
@@ -252,6 +258,7 @@ pub fn parse_tree(entries: &[TreeEntry]) -> (Vec<Livery>, Vec<ModelFile>) {
             junk_paths: junk,
             sig: fnv_hex(&sig_src),
             car_file,
+            preview,
             meta: None,
         });
     }
@@ -299,6 +306,7 @@ mod tests {
             te("TeamA/Skin One/car_config.json"),
             te("Root Skin/decals.png"),
             te("Root Skin/notes.psd"),
+            te("TeamA/Skin One/preview.webp"),
             te("liveries/Команда/Скин/sponsors.png"),
             te("README.md"),
         ];
@@ -310,6 +318,8 @@ mod tests {
         assert_eq!(a.files.len(), 2);
         assert_eq!(a.junk_count, 2);
         assert!(a.car_file.is_some());
+        assert!(a.preview.is_some());
+        assert_eq!(a.junk_count, 2);
         let r = l.iter().find(|x| x.name == "Root Skin").unwrap();
         assert_eq!(r.team, "");
         assert_eq!(r.junk_count, 1);

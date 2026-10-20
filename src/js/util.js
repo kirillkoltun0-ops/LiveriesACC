@@ -103,5 +103,6 @@ export const previewDb = (() => {
     },
     set: (k, v) => tx('readwrite', (s) => s.put(v, k)).catch(() => {}),
     del: (k) => tx('readwrite', (s) => s.delete(k)).catch(() => {}),
+    clear: () => tx('readwrite', (s) => s.clear()).catch(() => {}),
   };
 })();
