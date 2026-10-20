@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DOBEG LEAGUE — Livery Launcher</title>
+<style>
+:root{
+  --bg:#0b0d13; --bg2:#10131b; --panel:rgba(255,255,255,.045); --panel-hi:rgba(255,255,255,.075);
+  --stroke:rgba(255,255,255,.09); --text:#eceef4; --muted:#8a91a6; --dim:#5b6276;
+  --acc:#ff5500; --acc2:#ff8a3d; --acc-glow:rgba(255,85,0,.35);
+  --ok:#2fd18b; --warn:#ffb020; --bad:#ff4d5e; --info:#4ea1ff;
+  --r:16px; --font:"Bahnschrift","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --ease:cubic-bezier(.2,.8,.2,1);
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.45 var(--font);overflow:hidden;user-select:none;-webkit-user-select:none}
+input,select,button,textarea{font:inherit;color:inherit}
+input,textarea{user-select:text;-webkit-user-select:text}
+::selection{background:var(--acc);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--acc);background-clip:padding-box;border:2px solid transparent}
+[hidden]{display:none!important}
+
+/* ───── фон ───── */
+.bg{position:fixed;inset:0;z-index:-1;overflow:hidden;
+  background:radial-gradient(900px 600px at 8% -10%,rgba(255,85,0,.20),transparent 60%),
+             radial-gradient(800px 600px at 100% 110%,rgba(78,161,255,.12),transparent 60%),var(--bg)}
+.bg::before{content:"";position:absolute;inset:0;opacity:.5;
+  background:repeating-linear-gradient(115deg,transparent 0 46px,rgba(255,255,255,.018) 46px 47px)}
+.bg::after{content:"";position:absolute;width:140%;height:3px;left:-20%;top:96px;transform:rotate(-4deg);
+  background:linear-gradient(90deg,transparent,var(--acc),transparent);opacity:.35;filter:blur(1px);animation:sweep 9s linear infinite}
+@keyframes sweep{0%{transform:translateX(-30%) rotate(-4deg)}100%{transform:translateX(30%) rotate(-4deg)}}
+
+/* ───── общие элементы ───── */
+.glass{position:relative;background:rgba(18,21,29,.72);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
+  border:1px solid var(--stroke);border-radius:var(--r)}
+.glass::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;pointer-events:none;
+  background:linear-gradient(135deg,rgba(255,85,0,.6),rgba(255,255,255,.07) 35%,rgba(255,255,255,.04) 70%,rgba(255,85,0,.28));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+.btn{display:inline-flex;align-items:center;gap:8px;justify-content:center;cursor:pointer;border:1px solid var(--stroke);
+  background:var(--panel);padding:8px 14px;border-radius:10px;font-weight:600;letter-spacing:.02em;white-space:nowrap;
+  transition:transform .18s var(--ease),background .18s,border-color .18s,box-shadow .18s}
+.btn:hover{background:var(--panel-hi);border-color:rgba(255,255,255,.2);transform:translateY(-1px)}
+.btn:active{transform:translateY(0) scale(.98)}
+.btn:disabled,.btn.disabled{opacity:.4;pointer-events:none}
+.btn.primary{background:linear-gradient(135deg,var(--acc),#ff7a1a);border-color:transparent;color:#fff;box-shadow:0 6px 22px -6px var(--acc-glow)}
+.btn.primary:hover{box-shadow:0 8px 28px -4px var(--acc-glow);filter:brightness(1.08)}
+.btn.danger:hover{background:rgba(255,77,94,.15);border-color:var(--bad);color:#ff8d99}
+.btn.sm{padding:5px 10px;font-size:12px;border-radius:8px}
+.btn.icon{padding:8px;width:36px;height:36px}
+.btn svg,.ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.input{width:100%;background:rgba(0,0,0,.35);border:1px solid var(--stroke);border-radius:10px;padding:9px 12px;outline:none;transition:border-color .2s,box-shadow .2s}
+.input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,85,0,.18)}
+select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238a91a6' stroke-width='2' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+select option{background:#14171f}
+label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+.h-eyebrow{font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--acc)}
+.muted{color:var(--muted)} .tiny{font-size:12px}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:var(--acc);animation:rot .7s linear infinite;display:inline-block}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* ───── верхняя панель ───── */
+#app{height:100%;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:18px;padding:12px 22px;border-bottom:1px solid var(--stroke);
+  background:rgba(11,13,19,.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);position:relative;z-index:5}
+.brand{display:flex;align-items:center;gap:12px;flex:none}
+.brand svg{width:38px;height:38px;filter:drop-shadow(0 0 12px var(--acc-glow))}
+.brand b{display:block;font-size:19px;letter-spacing:.14em;font-weight:800;font-style:italic;line-height:1}
+.brand b i{color:var(--acc);font-style:inherit}
+.brand small{font-size:10px;letter-spacing:.34em;color:var(--muted);font-weight:600}
+.tabs{display:flex;gap:4px;margin-left:10px}
+.tab{padding:8px 16px;border-radius:10px;cursor:pointer;color:var(--muted);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px;border:0;background:none;position:relative;transition:color .2s}
+.tab:hover{color:var(--text)}
+.tab.on{color:#fff}
+.tab.on::after{content:"";position:absolute;left:14px;right:14px;bottom:-13px;height:3px;border-radius:3px;background:var(--acc);box-shadow:0 0 14px var(--acc)}
+.search{position:relative;flex:1;max-width:420px;margin-left:auto}
+.search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted)}
+.search input{padding-left:36px;border-radius:999px}
+.syncbox{flex:none;white-space:nowrap;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.dot.ok{background:var(--ok);box-shadow:0 0 0 0 rgba(47,209,139,.6);animation:pulse 2.4s infinite}
+.dot.busy{background:var(--acc)} .dot.bad{background:var(--bad)}
+@keyframes pulse{70%{box-shadow:0 0 0 7px rgba(47,209,139,0)}100%{box-shadow:0 0 0 0 rgba(47,209,139,0)}}
+.profile{flex:none;white-space:nowrap;display:flex;align-items:center;gap:10px;padding:5px 14px 5px 6px;border-radius:999px;cursor:pointer;border:1px solid var(--stroke);background:var(--panel);transition:.2s}
+.profile:hover{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,85,0,.15)}
+.avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#2a2f3f,#171a24);border:1px solid var(--stroke)}
+.profile.admin .avatar{background:linear-gradient(135deg,var(--acc),#ff7a1a);border-color:transparent;box-shadow:0 0 14px var(--acc-glow)}
+.profile small{display:block;font-size:10px;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;line-height:1.1}
+.profile b{font-size:13px;line-height:1.1}
+
+/* ───── библиотека ───── */
+main{flex:1;min-height:0;position:relative}
+.view{position:absolute;inset:0;overflow-y:auto;padding:22px 26px 40px;animation:viewIn .45s var(--ease)}
+@keyframes viewIn{from{opacity:0;transform:translateY(10px)}}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.stat{padding:14px 18px;display:flex;flex-direction:column;gap:2px}
+.stat span{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.stat b{font-size:30px;font-weight:800;font-style:italic;letter-spacing:.02em;line-height:1.1}
+.stat.hot b{color:var(--acc2)}
+.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:260px}
+.chip{padding:6px 14px;border-radius:999px;border:1px solid var(--stroke);background:var(--panel);cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.05em;transition:.2s;display:flex;gap:8px;align-items:center}
+.chip em{font-style:normal;color:var(--muted);font-weight:600}
+.chip:hover{border-color:rgba(255,255,255,.25)}
+.chip.on{background:linear-gradient(135deg,var(--acc),#ff7a1a);border-color:transparent;color:#fff;box-shadow:0 4px 16px -4px var(--acc-glow)}
+.chip.on em{color:rgba(255,255,255,.8)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:18px;perspective:1200px}
+
+.card{position:relative;border-radius:var(--r);overflow:hidden;transform-style:preserve-3d;
+  background:linear-gradient(var(--bg2),var(--bg2)) padding-box,linear-gradient(135deg,rgba(255,255,255,.12),rgba(255,255,255,.04)) border-box;border:1px solid transparent;
+  transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) translateY(var(--ty,0px));
+  transition:transform .25s var(--ease),box-shadow .3s;
+  opacity:0;animation:cardIn .55s var(--ease) forwards;animation-delay:calc(min(var(--i,0),24) * 38ms)}
+.card.noanim{animation:none;opacity:1}
+@keyframes cardIn{from{opacity:0;transform:translateY(22px) scale(.96)}to{opacity:1}}
+.card:hover{--ty:-4px;box-shadow:0 22px 50px -16px rgba(0,0,0,.8),0 0 0 1px rgba(255,85,0,.55),0 0 34px -6px var(--acc-glow)}
+.card::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:0;transition:opacity .3s;
+  background:radial-gradient(260px circle at var(--mx,50%) var(--my,0%),rgba(255,255,255,.12),transparent 60%)}
+.card:hover::after{opacity:1}
+.thumb{position:relative;aspect-ratio:16/9;background:radial-gradient(circle at 50% 120%,rgba(255,85,0,.28),transparent 60%),linear-gradient(160deg,#1a1e2a,#0e1017);display:grid;place-items:center;cursor:pointer;overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:cover;transition:transform .5s var(--ease)}
+.card:hover .thumb img{transform:scale(1.06)}
+.thumb .ph{display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--dim);font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+.thumb .ph svg{width:84px;height:auto;stroke:var(--dim);fill:none;stroke-width:1.6}
+.thumb .view3d{position:absolute;inset:auto 10px 10px auto;opacity:0;transform:translateY(6px);transition:.25s var(--ease)}
+.card:hover .view3d{opacity:1;transform:none}
+.num{position:absolute;left:10px;top:10px;font-style:italic;font-weight:800;font-size:20px;letter-spacing:.03em;padding:1px 12px 1px 10px;
+  background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border-left:3px solid var(--acc);clip-path:polygon(0 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+.pill{position:absolute;right:10px;top:10px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;padding:4px 10px;border-radius:999px;backdrop-filter:blur(6px)}
+.pill.ok{background:rgba(47,209,139,.16);color:var(--ok);border:1px solid rgba(47,209,139,.4)}
+.pill.update{background:rgba(255,176,32,.16);color:var(--warn);border:1px solid rgba(255,176,32,.45);animation:glowWarn 2s infinite}
+.pill.new{background:rgba(255,255,255,.08);color:var(--muted);border:1px solid var(--stroke)}
+@keyframes glowWarn{50%{box-shadow:0 0 14px rgba(255,176,32,.5)}}
+.cbody{padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.cbody h3{font-size:16px;font-weight:800;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmeta{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted)}
+.cmeta span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmeta .team{color:var(--acc2);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.cact{display:flex;gap:8px}
+.cact .btn{flex:1}
+.cprog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.06);opacity:0;transition:opacity .2s}
+.card.busy .cprog{opacity:1}
+.cprog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));box-shadow:0 0 12px var(--acc);transition:width .25s}
+.card.busy .btn{pointer-events:none;opacity:.55}
+.skel{border-radius:var(--r);height:300px;background:linear-gradient(100deg,rgba(255,255,255,.03) 30%,rgba(255,255,255,.09) 50%,rgba(255,255,255,.03) 70%);background-size:300% 100%;animation:shim 1.4s linear infinite;border:1px solid var(--stroke)}
+@keyframes shim{to{background-position:-300% 0}}
+.empty{grid-column:1/-1;text-align:center;padding:70px 20px;color:var(--muted)}
+.empty b{display:block;font-size:20px;color:var(--text);margin-bottom:6px}
+
+/* ───── модальные окна ───── */
+.overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(5,6,10,.62);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  opacity:0;pointer-events:none;transition:opacity .25s}
+.overlay.open{opacity:1;pointer-events:auto}
+.modal{width:min(480px,92vw);padding:26px;transform:translateY(18px) scale(.96);transition:transform .35s var(--ease);background-color:#12151d}
+.overlay.open .modal{transform:none}
+.modal h2{font-size:22px;font-weight:800;font-style:italic;letter-spacing:.04em;margin-bottom:4px}
+.modal .row{margin-top:16px}
+.modal .acts{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
+.shake{animation:shake .4s}
+@keyframes shake{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--stroke);cursor:pointer}
+.switch:last-child{border:0}
+.switch input{display:none}
+.switch i{width:40px;height:22px;border-radius:99px;background:rgba(255,255,255,.12);position:relative;transition:.2s;flex:none}
+.switch i::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.25s var(--ease)}
+.switch input:checked+i{background:var(--acc)}
+.switch input:checked+i::after{transform:translateX(18px)}
+
+/* ───── 3D-шоурум ───── */
+#m-show .stage{position:fixed;inset:24px;display:grid;grid-template-columns:1fr 310px;gap:16px;transform:scale(.97);transition:transform .35s var(--ease)}
+#m-show.open .stage{transform:none}
+.viewport{position:relative;border-radius:var(--r);overflow:hidden;background:radial-gradient(ellipse at 50% 100%,#2b1a12 0%,#12151d 55%,#0b0d13 100%);border:1px solid var(--stroke)}
+.viewport canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+.viewport canvas:active{cursor:grabbing}
+.vp-top{position:absolute;left:18px;top:14px;right:18px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none}
+.vp-top h2{font-size:24px;font-weight:800;font-style:italic;letter-spacing:.03em;text-shadow:0 2px 12px #000}
+.vp-top .btn{pointer-events:auto}
+.vp-hint{position:absolute;left:0;right:0;bottom:12px;text-align:center;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+.loader{position:absolute;inset:0;display:grid;place-items:center;background:rgba(11,13,19,.7);backdrop-filter:blur(4px);z-index:2;transition:opacity .3s}
+.loader[hidden]{display:grid!important;opacity:0;pointer-events:none}
+.loader div{text-align:center;width:240px}
+.loader .bar{height:4px;border-radius:4px;background:rgba(255,255,255,.1);margin-top:12px;overflow:hidden}
+.loader .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s}
+.side{padding:18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;background-color:#12151d}
+.side .tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.color{display:flex;gap:10px;align-items:center}
+.color input[type=color]{width:42px;height:34px;border:1px solid var(--stroke);border-radius:8px;background:none;padding:2px;cursor:pointer}
+.note{font-size:12px;color:var(--muted);line-height:1.5}
+
+/* ───── админ-панель ───── */
+.admin-wrap{max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.panel{padding:22px}
+.panel h3{font-size:16px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.panel h3 .n{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--acc);font-size:13px;font-style:italic}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.drop{border:2px dashed rgba(255,255,255,.16);border-radius:14px;padding:34px 20px;text-align:center;cursor:pointer;transition:.25s var(--ease);background:rgba(0,0,0,.2)}
+.drop:hover,.drop.over{border-color:var(--acc);background:rgba(255,85,0,.07);transform:scale(1.005)}
+.drop svg{width:44px;height:44px;color:var(--acc);margin-bottom:8px;stroke:currentColor;fill:none;stroke-width:1.6}
+.drop b{display:block;font-size:17px}
+.items{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+.item{padding:16px;border-radius:14px;background:rgba(0,0,0,.28);border:1px solid var(--stroke);animation:viewIn .35s var(--ease)}
+.item.bad{border-color:rgba(255,77,94,.4)}
+.item header{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.item header h4{font-size:16px;font-weight:800;flex:1}
+.checks{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px;margin:0}
+.checks li{display:flex;gap:10px;align-items:flex-start;font-size:13px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.03)}
+.checks li::before{content:"";flex:none;width:18px;height:18px;border-radius:50%;margin-top:1px;background-position:center;background-repeat:no-repeat;background-size:11px}
+.checks li.ok::before{background-color:rgba(47,209,139,.2);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l3 3 5-6' stroke='%232fd18b' stroke-width='2' fill='none'/%3E%3C/svg%3E")}
+.checks li.bad::before{background-color:rgba(255,77,94,.2);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 3l6 6M9 3l-6 6' stroke='%23ff4d5e' stroke-width='2' fill='none'/%3E%3C/svg%3E")}
+.checks li.warn::before{background-color:rgba(255,176,32,.2);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M6 2v5M6 9.5v.5' stroke='%23ffb020' stroke-width='2' fill='none'/%3E%3C/svg%3E")}
+.checks li.info::before{background-color:rgba(78,161,255,.2);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M6 5.5v4M6 2.5v.5' stroke='%234ea1ff' stroke-width='2' fill='none'/%3E%3C/svg%3E")}
+.checks .grow{flex:1;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.checks .input{width:auto;padding:4px 8px;font-size:12px}
+.progress{height:8px;border-radius:8px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:14px}
+.progress i{display:block;height:100%;width:0;border-radius:8px;transition:width .3s var(--ease);
+  background:repeating-linear-gradient(115deg,var(--acc) 0 12px,var(--acc2) 12px 24px);background-size:34px 100%;animation:stripes 1s linear infinite}
+@keyframes stripes{to{background-position:34px 0}}
+table.t{width:100%;border-collapse:collapse;font-size:13px}
+table.t td,table.t th{padding:8px 10px;text-align:left;border-bottom:1px solid var(--stroke)}
+table.t th{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+table.t td:last-child{text-align:right}
+
+/* ───── тосты ───── */
+#toasts{position:fixed;right:20px;bottom:20px;z-index:100;display:flex;flex-direction:column;gap:10px;align-items:flex-end;pointer-events:none}
+.toast{pointer-events:auto;min-width:260px;max-width:380px;padding:12px 16px;border-radius:12px;background:rgba(18,21,29,.94);backdrop-filter:blur(16px);
+  border:1px solid var(--stroke);border-left:4px solid var(--info);box-shadow:0 14px 40px -10px #000;animation:toastIn .45s var(--ease)}
+.toast.ok{border-left-color:var(--ok)} .toast.bad{border-left-color:var(--bad)} .toast.warn{border-left-color:var(--warn)}
+.toast b{display:block;font-size:13px;letter-spacing:.04em}
+.toast span{font-size:12px;color:var(--muted)}
+.toast .bar{height:3px;background:rgba(255,255,255,.1);border-radius:3px;margin-top:8px;overflow:hidden}
+.toast .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .25s}
+.toast.out{animation:toastOut .3s forwards}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px) scale(.95)}}
+@keyframes toastOut{to{opacity:0;transform:translateX(40px) scale(.95)}}
+
+@media (max-width:1180px){.stats{grid-template-columns:repeat(2,1fr)}.search{max-width:220px}#m-show .stage{grid-template-columns:1fr}.side{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 48 48"><rect x="2" y="2" width="44" height="44" rx="11" fill="#0b0d13" stroke="#ff5500" stroke-width="2.5"/><path d="M15 12h10c8 0 13 5 13 12s-5 12-13 12H15z" fill="#ff5500"/><path d="M21 18h4c3.5 0 6 2.5 6 6s-2.5 6-6 6h-4z" fill="#0b0d13"/></svg>
+      <div><b>DOBEG <i>LEAGUE</i></b><small>LIVERY LAUNCHER</small></div>
+    </div>
+    <nav class="tabs">
+      <button class="tab on" data-view="library">Ливреи</button>
+      <button class="tab" data-view="admin" id="tab-admin" hidden>Админ-панель</button>
+    </nav>
+    <div class="search">
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="q" class="input" placeholder="Поиск: команда, ливрея, номер…" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="syncbox"><span class="dot" id="syncDot"></span><span id="syncText">—</span>
+      <button class="btn icon" id="btnSync" title="Синхронизировать"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+      <button class="btn icon" id="btnSettings" title="Настройки"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    </div>
+    <div class="profile" id="profile" title="Профиль">
+      <div class="avatar"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></div>
+      <div><small>Профиль</small><b id="roleName">Пилот</b></div>
+    </div>
+  </header>
+
+  <main>
+    <!-- ───── Библиотека ───── -->
+    <section class="view" id="view-library">
+      <div class="stats">
+        <div class="glass stat"><span>Всего ливрей</span><b id="stTotal">0</b></div>
+        <div class="glass stat"><span>Установлено</span><b id="stInst">0</b></div>
+        <div class="glass stat hot"><span>Доступны обновления</span><b id="stUpd">0</b></div>
+        <div class="glass stat"><span>Команд</span><b id="stTeams">0</b></div>
+      </div>
+      <div class="toolbar">
+        <div class="chips" id="chips"></div>
+        <select class="input" id="statusFilter" style="width:190px">
+          <option value="all">Все статусы</option><option value="installed">Установленные</option>
+          <option value="update">Есть обновление</option><option value="new">Не установлены</option>
+        </select>
+        <button class="btn" id="btnTeamDl" hidden></button>
+        <button class="btn primary" id="btnSyncAll">Синхронизировать всё</button>
+        <button class="btn" id="btnPrevAll" title="Сгенерировать 3D-превью для всех карточек">📸 Превью</button>
+        <button class="btn" id="btnOpen">Открыть папку</button>
+        <button class="btn danger" id="btnRemoveAll">Удалить всё</button>
+      </div>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <!-- ───── Админ-панель ───── -->
+    <section class="view" id="view-admin" hidden>
+      <div class="admin-wrap">
+        <div class="glass panel">
+          <h3><span class="n">1</span> GitHub Personal Access Token</h3>
+          <div class="two">
+            <div>
+              <label class="f">Токен (fine-grained: Contents → Read and write)</label>
+              <input id="tokenInput" class="input" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+            </div>
+            <div style="display:flex;align-items:flex-end;gap:10px">
+              <button class="btn" id="btnTokenSave">Сохранить и проверить</button>
+              <span class="tiny muted" id="tokenState"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass panel">
+          <h3><span class="n">2</span> Папка со скином</h3>
+          <div class="drop" id="drop">
+            <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <b>Перетащите папку со скином сюда или нажмите, чтобы выбрать</b>
+            <span class="muted tiny">Можно бросить целую папку Customs — лаунчер сам найдёт все скины и их конфиги из Cars</span>
+          </div>
+          <input type="file" id="dirInput" webkitdirectory directory multiple hidden>
+          <div class="two" style="margin-top:14px">
+            <div><label class="f">Команда (папка в репозитории)</label>
+              <input id="teamInput" class="input" list="teamList" placeholder="например, Dobeg Racing" autocomplete="off"><datalist id="teamList"></datalist></div>
+            <div><label class="f">Репозиторий</label><input class="input" value="kirillkoltun0-ops/dobeg-liveries" disabled></div>
+          </div>
+          <div class="items" id="items"></div>
+          <div style="display:flex;align-items:center;gap:14px;margin-top:16px">
+            <button class="btn primary" id="btnPublish" disabled>Опубликовать на GitHub</button>
+            <span class="muted tiny" id="publishInfo"></span>
+          </div>
+          <div class="progress" id="pubBar" hidden><i></i></div>
+          <div class="tiny muted" id="pubStep" style="margin-top:8px"></div>
+        </div>
+
+        <div class="glass panel">
+          <h3><span class="n">3</span> Ливреи в репозитории</h3>
+          <table class="t"><thead><tr><th>Команда</th><th>Ливрея</th><th>Файлы</th><th></th></tr></thead><tbody id="repoRows"></tbody></table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ───── Модалки ───── -->
+<div class="overlay" id="m-login">
+  <form class="glass modal" id="loginForm" autocomplete="off">
+    <div class="h-eyebrow">Доступ</div>
+    <h2 id="loginTitle">Вход для администратора</h2>
+    <p class="muted tiny" id="loginSub">Введите пароль лиги, чтобы открыть админ-панель.</p>
+    <div class="row"><label class="f">Пароль</label><input id="loginPass" class="input" type="password" placeholder="••••••••"></div>
+    <div class="acts"><button type="button" class="btn" data-close>Отмена</button><button type="submit" class="btn primary">Войти</button></div>
+  </form>
+</div>
+
+<div class="overlay" id="m-confirm">
+  <div class="glass modal">
+    <div class="h-eyebrow" id="cfEyebrow">Подтверждение</div>
+    <h2 id="cfTitle"></h2>
+    <p class="muted" id="cfText" style="margin-top:6px"></p>
+    <div class="acts"><button class="btn" id="cfNo">Отмена</button><button class="btn danger primary" id="cfYes">Подтвердить</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="m-settings">
+  <div class="glass modal" style="width:min(560px,92vw)">
+    <div class="h-eyebrow">Конфигурация</div>
+    <h2>Настройки</h2>
+    <div class="row"><label class="f">Папка Customs (Assetto Corsa Competizione)</label>
+      <div style="display:flex;gap:8px"><input id="pathInput" class="input" spellcheck="false"><button class="btn" id="btnBrowse">Обзор…</button></div>
+      <div class="tiny muted" style="margin-top:6px">По умолчанию: «Документы\Assetto Corsa Competizione\Customs» (учитывает OneDrive).</div>
+    </div>
+    <div class="row">
+      <label class="switch"><span>Автоматически обновлять установленные ливреи<br><small class="muted">при старте и каждые 10 минут</small></span><input type="checkbox" id="optAutoUpd"><i></i></label>
+      <label class="switch"><span>Автоматически ставить новые ливреи<br><small class="muted">все новые скины из репозитория</small></span><input type="checkbox" id="optAutoNew"><i></i></label>
+    </div>
+    <div class="acts"><button class="btn" id="btnPathReset">Сбросить путь</button><button class="btn primary" id="btnSettingsSave">Сохранить</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="m-show">
+  <div class="stage">
+    <div class="viewport">
+      <canvas id="glcanvas"></canvas>
+      <div class="vp-top"><div><div class="h-eyebrow" id="shTeam"></div><h2 id="shTitle"></h2></div><button class="btn" data-close>✕ Закрыть</button></div>
+      <div class="vp-hint">Вращение — ЛКМ · Масштаб — колесо</div>
+      <div class="loader" id="shLoader" hidden><div><div class="spin" style="width:30px;height:30px"></div><p id="shLoadTxt" class="muted tiny" style="margin-top:12px">Загрузка…</p><div class="bar"><i id="shLoadBar"></i></div></div></div>
+    </div>
+    <aside class="glass side">
+      <div><label class="f">Кузов (3D-модель)</label><select id="shModel" class="input"></select>
+        <div class="note" id="shModelNote" style="margin-top:6px"></div></div>
+      <div><label class="f">Цвет подложки</label>
+        <div class="color"><input type="color" id="shBase" value="#1c1f29"><span class="note">Фон под decals — как «база» в игре</span></div></div>
+      <div class="tools">
+        <button class="btn" id="shFlip">↕ Отразить UV</button>
+        <button class="btn" id="shRotate">⟳ Автовращение</button>
+      </div>
+      <button class="btn primary" id="shShot">📸 Сделать превью</button>
+      <div style="flex:1"></div>
+      <div class="note" id="shInfo"></div>
+      <button class="btn primary" id="shInstall">Установить</button>
+    </aside>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
