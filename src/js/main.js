@@ -14,6 +14,8 @@ const ADMIN_HASH = '62d1e13b49fbbd4d1a08650bc3d2847bcdf05b70b0d07717f39289d4c759
 const workerUrl = () => (ls.get('workerUrl') || WORKER_URL || '').trim();
 const usesWorker = () => !!workerUrl();
 
+let BUILD = { adminKey: '', edition: 'pilot' };
+
 const S = {
   customs: '', remote: null, installed: {}, previews: new Map(),
   isAdmin: ls.get('isAdmin', false), token: ls.get('ghToken', ''),
@@ -486,6 +488,8 @@ function switchView(v) {
 $$('.tab').forEach((t) => (t.onclick = () => switchView(t.dataset.view)));
 
 $('#profile').onclick = async () => {
+  if (BUILD.edition === 'admin') return toast('Админская сборка', 'Права администратора выданы этой сборке автоматически.', 'info', 3000);
+  if (usesWorker()) return toast('Режим пилота', 'Управление ливреями доступно только в админской сборке лаунчера.', 'info', 3500);
   if (S.isAdmin) {
     if (await ask('Выйти из режима администратора?', 'Админ-панель будет скрыта.', 'Выйти')) {
       S.isAdmin = false; ls.set('isAdmin', false); applyRole(); toast('Вы вошли как пилот', '', 'info', 2500);
@@ -652,7 +656,7 @@ function renderAdmin() {
 }
 
 async function connectToken(t, silent) {
-  S.token = t; ls.set('ghToken', t);
+  S.token = t; if (BUILD.edition !== 'admin') ls.set('ghToken', t);
   if (!t) { S.login = ''; ls.set('ghLogin', ''); return renderTokenUI(); }
   $('#tokenState').innerHTML = '<span class="spin"></span>';
   try {
@@ -957,6 +961,9 @@ $('#repoRows').addEventListener('click', async (e) => {
 
 // ───────────────────────── Запуск ─────────────────────────
 async function boot() {
+  try { BUILD = await invoke('build_info'); } catch { /* старая сборка без команды */ }
+  if (BUILD.edition === 'admin') { S.isAdmin = true; S.token = BUILD.adminKey; }      // ключ вшит — вход автоматический
+  else if (usesWorker()) { S.isAdmin = false; }                                       // пилотская сборка с сервером: админки нет
   applyCfg(); document.documentElement.dataset.theme = S.cfg.theme;
   applyRole();
   // мгновенная отрисовка из кэша, пока идёт сетевая синхронизация
@@ -969,7 +976,7 @@ async function boot() {
   render(true);
   renderAdmin();
   scheduleSync();
-  if (S.token && !S.login) connectToken(S.token, true);
+  if (S.token && (!S.login || BUILD.edition === 'admin')) connectToken(S.token, true);
   await sync();
 }
 boot().catch((e) => toast('Критическая ошибка запуска', errText(e), 'bad', 0));

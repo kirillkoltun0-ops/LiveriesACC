@@ -97,6 +97,13 @@ fn cars_dir(customs: &str) -> PathBuf {
 
 // ───────────────────────── Команды: пути ─────────────────────────
 
+/// Админская сборка получает ключ при компиляции (секрет GitHub Actions) — вводить ничего не нужно.
+#[tauri::command]
+fn build_info() -> Value {
+    let key = option_env!("DOBEG_ADMIN_KEY").unwrap_or("").trim();
+    json!({ "adminKey": key, "edition": if key.is_empty() { "pilot" } else { "admin" } })
+}
+
 #[tauri::command]
 fn default_customs_path() -> String {
     // dirs::document_dir() на Windows использует Known Folder API → корректно работает с OneDrive\Документы
@@ -547,6 +554,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            build_info,
             default_customs_path,
             ensure_customs,
             open_folder,

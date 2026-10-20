@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      ADMIN_KEY_SET: ${{ secrets.DOBEG_ADMIN_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -13,9 +15,19 @@ jobs:
         with:
           workspaces: src-tauri
       - run: cargo install tauri-cli --version "^2" --locked
-      - name: Build portable exe (без инсталлятора)
+      - name: Пилотская сборка (без админки, без ключей)
         run: cargo tauri build --no-bundle
+      - run: |
+          mkdir out
+          copy src-tauri\target\release\dobeg-launcher.exe out\DOBEG-Launcher.exe
+      - name: Админская сборка (ключ вшивается из секрета DOBEG_ADMIN_KEY)
+        if: env.ADMIN_KEY_SET == 'true'
+        env:
+          DOBEG_ADMIN_KEY: ${{ secrets.DOBEG_ADMIN_KEY }}
+        run: |
+          cargo tauri build --no-bundle
+          copy src-tauri\target\release\dobeg-launcher.exe out\DOBEG-Launcher-ADMIN.exe
       - uses: actions/upload-artifact@v4
         with:
           name: DOBEG-Launcher
-          path: src-tauri/target/release/dobeg-launcher.exe
+          path: out/*.exe

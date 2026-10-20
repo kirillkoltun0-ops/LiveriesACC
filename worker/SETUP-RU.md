@@ -38,3 +38,11 @@ Worker → **Settings → Variables and Secrets → Add**:
 - Админ: вкладка «Админ-панель» → один раз вводит свой ключ → бросает папку с ливреей.
 
 Если Worker недоступен, лаунчер пилота автоматически читает данные напрямую из GitHub.
+
+## 6. Админская сборка без ввода ключа
+В репозитории GitHub: Settings → Secrets and variables → Actions → New repository secret:
+`DOBEG_ADMIN_KEY` = ваш ключ из `ADMIN_KEYS` (только значение ключа, без имени).
+Запустите Actions → Build Windows exe. В артефактах будут два файла:
+- `DOBEG-Launcher.exe` — для пилотов (админки нет, ничего вводить не нужно);
+- `DOBEG-Launcher-ADMIN.exe` — только для админов (ключ уже внутри, панель открыта сразу).
+Файл ADMIN никому не раздавайте. Если он утёк — удалите ключ из `ADMIN_KEYS` в Cloudflare, и он перестанет работать.
