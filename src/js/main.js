@@ -489,7 +489,7 @@ $$('.tab').forEach((t) => (t.onclick = () => switchView(t.dataset.view)));
 
 $('#profile').onclick = async () => {
   if (BUILD.edition === 'admin') return toast('Админская сборка', 'Права администратора выданы этой сборке автоматически.', 'info', 3000);
-  if (usesWorker()) return toast('Режим пилота', 'Управление ливреями доступно только в админской сборке лаунчера.', 'info', 3500);
+  if (BUILD.edition !== 'admin') return toast('Режим пилота', 'Управление ливреями доступно только в админской сборке лаунчера.', 'info', 3500);
   if (S.isAdmin) {
     if (await ask('Выйти из режима администратора?', 'Админ-панель будет скрыта.', 'Выйти')) {
       S.isAdmin = false; ls.set('isAdmin', false); applyRole(); toast('Вы вошли как пилот', '', 'info', 2500);
@@ -963,7 +963,7 @@ $('#repoRows').addEventListener('click', async (e) => {
 async function boot() {
   try { BUILD = await invoke('build_info'); } catch { /* старая сборка без команды */ }
   if (BUILD.edition === 'admin') { S.isAdmin = true; S.token = BUILD.adminKey; }      // ключ вшит — вход автоматический
-  else if (usesWorker()) { S.isAdmin = false; }                                       // пилотская сборка с сервером: админки нет
+  else { S.isAdmin = false; }                                                          // пилотская сборка: админки нет вообще
   applyCfg(); document.documentElement.dataset.theme = S.cfg.theme;
   applyRole();
   // мгновенная отрисовка из кэша, пока идёт сетевая синхронизация
