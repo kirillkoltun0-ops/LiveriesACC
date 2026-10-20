@@ -11,10 +11,10 @@ const invoke = (cmd, args) => T.core.invoke(cmd, args);
 const ADMIN_HASH = '62d1e13b49fbbd4d1a08650bc3d2847bcdf05b70b0d07717f39289d4c759199a';
 
 /** Адрес Worker: из настроек (для отладки) или вшитый в config.js. */
+/** Ссылка на файл: прямая от сервера, иначе raw.githubusercontent.com. */
+const urlOf = (f) => f.url || rawUrl(f.path);
 const workerUrl = () => (ls.get('workerUrl') || WORKER_URL || '').trim();
 const usesWorker = () => !!workerUrl();
-
-let BUILD = { adminKey: '', edition: 'pilot' };
 
 const S = {
   customs: '', remote: null, installed: {}, previews: new Map(),
@@ -214,7 +214,7 @@ function filtered() {
 function previewUrl(l) {
   const loc = S.previews.get(l.id);
   if (loc && loc.sig === l.sig) return loc.url;
-  if (l.preview) return rawUrl(l.preview.path);
+  if (l.preview) return urlOf(l.preview);
   return loc?.url ?? null;
 }
 
@@ -396,9 +396,9 @@ async function loadShow(model) {
   const l = cur.l, my = cur;
   setLoader(true, 'Загрузка модели…', 0);
   try {
-    await show.setModel({ url: rawUrl(model.path), name: model.name, sha: model.sha }, (p) => setLoader(true, `Загрузка модели… ${Math.round(p * 100)}%`, p));
+    await show.setModel({ url: urlOf(model), name: model.name, sha: model.sha }, (p) => setLoader(true, `Загрузка модели… ${Math.round(p * 100)}%`, p));
     setLoader(true, 'Сборка текстуры…', 1);
-    const f = (n) => { const x = fileOf(l, n); return x ? rawUrl(x.path) : null; };
+    const f = (n) => { const x = fileOf(l, n); return x ? urlOf(x) : null; };
     const problems = await show.setLivery({ decals: f('decals.png'), sponsors: f('sponsors.png'), decalsJson: f('decals.json'), sponsorsJson: f('sponsors.json') });
     if (problems.length) toast('Часть слоёв не загружена', problems.join(', '), 'warn');
     setLoader(false);
@@ -458,8 +458,8 @@ $('#btnPrevAll').onclick = async () => {
     let n = 0;
     for (const { l, m } of todo) {
       try {
-        await sr.setModel({ url: rawUrl(m.path), name: m.name, sha: m.sha });
-        const f = (nm) => { const x = fileOf(l, nm); return x ? rawUrl(x.path) : null; };
+        await sr.setModel({ url: urlOf(m), name: m.name, sha: m.sha });
+        const f = (nm) => { const x = fileOf(l, nm); return x ? urlOf(x) : null; };
         await sr.setLivery({ decals: f('decals.png'), sponsors: f('sponsors.png'), decalsJson: f('decals.json'), sponsorsJson: f('sponsors.json') });
         await sleep(60);
         const url = sr.capture();
@@ -487,29 +487,38 @@ function switchView(v) {
 }
 $$('.tab').forEach((t) => (t.onclick = () => switchView(t.dataset.view)));
 
+function logoutAdmin() {
+  S.isAdmin = false; ls.set('isAdmin', false);
+  if (usesWorker()) { S.token = ''; S.login = ''; ls.set('ghToken', ''); ls.set('ghLogin', ''); }
+  applyRole(); renderTokenUI();
+}
+
 $('#profile').onclick = async () => {
-  if (BUILD.edition === 'admin') return toast('Админская сборка', 'Права администратора выданы этой сборке автоматически.', 'info', 3000);
-  if (BUILD.edition !== 'admin') return toast('Режим пилота', 'Управление ливреями доступно только в админской сборке лаунчера.', 'info', 3500);
   if (S.isAdmin) {
-    if (await ask('Выйти из режима администратора?', 'Админ-панель будет скрыта.', 'Выйти')) {
-      S.isAdmin = false; ls.set('isAdmin', false); applyRole(); toast('Вы вошли как пилот', '', 'info', 2500);
-    }
+    if (await ask('Выйти из режима администратора?', 'Админ-панель будет скрыта.', 'Выйти')) { logoutAdmin(); toast('Вы вошли как пилот', '', 'info', 2500); }
     return;
   }
+  $('#loginUserRow').hidden = !usesWorker();
+  $('#loginSub').textContent = usesWorker() ? 'Логин и пароль выдаёт владелец лиги. Вводятся один раз.' : 'Введите пароль лиги, чтобы открыть админ-панель.';
   $('#loginPass').value = '';
   openModal('m-login');
-  setTimeout(() => $('#loginPass').focus(), 120);
+  setTimeout(() => (usesWorker() ? $('#loginUser') : $('#loginPass')).focus(), 120);
 };
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if ((await sha256Hex($('#loginPass').value)) === ADMIN_HASH) {
+  let ok = false;
+  if (usesWorker()) {
+    const user = $('#loginUser').value.trim(), pass = $('#loginPass').value;
+    if (user && pass) { await connectToken(`${user}:${pass}`, true); ok = !!S.login; }
+  } else ok = (await sha256Hex($('#loginPass').value)) === ADMIN_HASH;
+  if (ok) {
     S.isAdmin = true; ls.set('isAdmin', true);
     closeModal('m-login'); applyRole(); switchView('admin');
-    toast('Добро пожаловать', 'Режим администратора включён.', 'ok', 3000);
+    toast('Добро пожаловать', usesWorker() ? `Вы вошли как ${S.login}` : 'Режим администратора включён.', 'ok', 3000);
   } else {
     const m = $('#loginForm'); m.classList.remove('shake'); void m.offsetWidth; m.classList.add('shake');
     $('#loginPass').select();
-    toast('Неверный пароль', '', 'bad', 2500);
+    toast(usesWorker() ? 'Неверный логин или пароль' : 'Неверный пароль', '', 'bad', 2500);
   }
 });
 
@@ -635,15 +644,13 @@ $('#btnResetCfg').onclick = async () => {
 const A = { items: [], publishing: false };
 
 function renderTokenUI() {
-  const ok = !!(S.token && S.login);
-  $('#tokenOk').hidden = !ok; $('#tokenForm').hidden = ok;
-  $('#tokenOkText').innerHTML = usesWorker() ? `✔ Вы вошли как администратор <b>${esc(S.login)}</b>` : `✔ GitHub подключён как <b>${esc(S.login)}</b> · запись в репозиторий разрешена`;
-  $('#tokenTitle').textContent = usesWorker() ? 'Вход администратора' : 'Подключение к GitHub';
-  $('#tokenLabel').textContent = usesWorker() ? 'Ключ администратора (выдаёт владелец лиги)' : 'Токен (fine-grained: Contents → Read and write)';
-  $('#tokenInput').placeholder = usesWorker() ? 'ваш ключ' : 'github_pat_…';
-  $('#btnTokenSave').textContent = usesWorker() ? 'Войти' : 'Подключить';
-  $('#btnTokenChange').textContent = usesWorker() ? 'Сменить ключ' : 'Сменить токен';
-  $('#tokenInput').value = S.token;
+  const w = usesWorker(), ok = !!(S.token && S.login);
+  $('#tokenOk').hidden = !ok; $('#tokenForm').hidden = ok || w;      // с сервером вход делается через профиль, а не здесь
+  $('#tokenOkText').innerHTML = w ? `✔ Вы вошли как <b>${esc(S.login)}</b> · загрузка ливрей разрешена` : `✔ GitHub подключён как <b>${esc(S.login)}</b> · запись в репозиторий разрешена`;
+  $('#tokenTitle').textContent = w ? 'Администратор' : 'Подключение к GitHub';
+  $('#btnTokenChange').textContent = w ? 'Выйти' : 'Сменить токен';
+  $('#tokenInput').value = w ? '' : S.token;
+  $('#tokenPanel .chiplet').hidden = w;
   refreshPublish();
 }
 
@@ -656,18 +663,18 @@ function renderAdmin() {
 }
 
 async function connectToken(t, silent) {
-  S.token = t; if (BUILD.edition !== 'admin') ls.set('ghToken', t);
+  S.token = t; ls.set('ghToken', t);
   if (!t) { S.login = ''; ls.set('ghLogin', ''); return renderTokenUI(); }
   $('#tokenState').innerHTML = '<span class="spin"></span>';
   try {
     const r = await invoke('github_check_token', { token: t, worker: workerUrl() || null });
     if (r.canPush) { S.login = r.login; ls.set('ghLogin', r.login); if (!silent) toast(usesWorker() ? 'Вход выполнен' : 'GitHub подключён', r.login, 'ok'); }
     else { S.login = ''; $('#tokenState').textContent = `⚠ ${r.login}: нет права записи в репозиторий`; toast('Токен без прав записи', 'Нужно Contents: Read and write', 'warn', 6000); }
-  } catch (e) { S.login = ''; $('#tokenState').textContent = '✖ ' + errText(e); if (!silent) toast(usesWorker() ? 'Ключ не подошёл' : 'Токен не подошёл', errText(e), 'bad', 7000); }
+  } catch (e) { S.login = ''; $('#tokenState').textContent = '✖ ' + errText(e); if (!silent) toast(usesWorker() ? 'Не удалось войти' : 'Токен не подошёл', errText(e), 'bad', 7000); }
   renderTokenUI();
 }
 $('#btnTokenSave').onclick = () => connectToken($('#tokenInput').value.trim());
-$('#btnTokenChange').onclick = () => { S.login = ''; renderTokenUI(); $('#tokenInput').focus(); };
+$('#btnTokenChange').onclick = () => { if (usesWorker()) { logoutAdmin(); switchView('library'); } else { S.login = ''; renderTokenUI(); $('#tokenInput').focus(); } };
 
 // — сбор файлов из drag&drop и <input webkitdirectory> —
 async function walkEntry(entry, base, out) {
@@ -879,7 +886,7 @@ async function renderAdminPreview(sr, it) {
   const urls = {};
   for (const n of ['decals.png', 'sponsors.png', 'decals.json', 'sponsors.json']) if (it.files[n]) urls[n] = URL.createObjectURL(it.files[n]);
   try {
-    await sr.setModel({ url: rawUrl(m.path), name: m.name, sha: m.sha });
+    await sr.setModel({ url: urlOf(m), name: m.name, sha: m.sha });
     await sr.setLivery({ decals: urls['decals.png'], sponsors: urls['sponsors.png'], decalsJson: urls['decals.json'], sponsorsJson: urls['sponsors.json'] });
     await sleep(80);
     const d = sr.capture();
@@ -961,9 +968,6 @@ $('#repoRows').addEventListener('click', async (e) => {
 
 // ───────────────────────── Запуск ─────────────────────────
 async function boot() {
-  try { BUILD = await invoke('build_info'); } catch { /* старая сборка без команды */ }
-  if (BUILD.edition === 'admin') { S.isAdmin = true; S.token = BUILD.adminKey; }      // ключ вшит — вход автоматический
-  else { S.isAdmin = false; }                                                          // пилотская сборка: админки нет вообще
   applyCfg(); document.documentElement.dataset.theme = S.cfg.theme;
   applyRole();
   // мгновенная отрисовка из кэша, пока идёт сетевая синхронизация
@@ -976,7 +980,10 @@ async function boot() {
   render(true);
   renderAdmin();
   scheduleSync();
-  if (S.token && (!S.login || BUILD.edition === 'admin')) connectToken(S.token, true);
+  if (S.token && S.isAdmin) {
+    // сохранённый вход перепроверяем: пароль могли сменить или отозвать
+    connectToken(S.token, true).then(() => { if (usesWorker() && !S.login) { logoutAdmin(); toast('Нужно войти заново', 'Логин или пароль администратора больше не действуют.', 'warn', 6000); } });
+  } else if (S.token && !S.login) connectToken(S.token, true);
   await sync();
 }
 boot().catch((e) => toast('Критическая ошибка запуска', errText(e), 'bad', 0));

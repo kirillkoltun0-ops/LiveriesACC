@@ -23,6 +23,9 @@ pub struct RemoteFile {
     pub path: String,
     pub sha: String,
     pub size: u64,
+    /// Прямая ссылка на файл (если её дал сервер); иначе — raw.githubusercontent.com
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +53,8 @@ pub struct ModelFile {
     pub path: String,
     pub sha: String,
     pub size: u64,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +66,8 @@ pub struct TreeEntry {
     pub sha: String,
     #[serde(default)]
     pub size: Option<u64>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 // ───────────────────────── Кодировки ─────────────────────────
@@ -186,6 +193,7 @@ pub fn parse_tree(entries: &[TreeEntry]) -> (Vec<Livery>, Vec<ModelFile>) {
                     path: e.path.clone(),
                     sha: e.sha.clone(),
                     size: e.size.unwrap_or(0),
+                    url: e.url.clone(),
                 });
             }
             continue;
@@ -225,6 +233,7 @@ pub fn parse_tree(entries: &[TreeEntry]) -> (Vec<Livery>, Vec<ModelFile>) {
                 path: f.path.clone(),
                 sha: f.sha.clone(),
                 size: f.size.unwrap_or(0),
+                url: f.url.clone(),
             };
             if fname.eq_ignore_ascii_case("preview.webp") {
                 preview = Some(rf);
@@ -272,7 +281,7 @@ mod tests {
     use super::*;
 
     fn te(path: &str) -> TreeEntry {
-        TreeEntry { path: path.into(), kind: "blob".into(), sha: format!("sha_{path}"), size: Some(10) }
+        TreeEntry { path: path.into(), kind: "blob".into(), sha: format!("sha_{path}"), size: Some(10), url: None }
     }
 
     #[test]

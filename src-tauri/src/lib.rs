@@ -97,13 +97,6 @@ fn cars_dir(customs: &str) -> PathBuf {
 
 // ───────────────────────── Команды: пути ─────────────────────────
 
-/// Админская сборка получает ключ при компиляции (секрет GitHub Actions) — вводить ничего не нужно.
-#[tauri::command]
-fn build_info() -> Value {
-    let key = option_env!("DOBEG_ADMIN_KEY").unwrap_or("").trim();
-    json!({ "adminKey": key, "edition": if key.is_empty() { "pilot" } else { "admin" } })
-}
-
 #[tauri::command]
 fn default_customs_path() -> String {
     // dirs::document_dir() на Windows использует Known Folder API → корректно работает с OneDrive\Документы
@@ -183,7 +176,8 @@ async fn fetch_meta(rev: String, l: Livery, cache: std::sync::Arc<Mutex<HashMap<
         l.meta = Some(m);
         return l;
     }
-    if let Ok(resp) = http().get(raw_url(&rev, &cf.path)).send().await {
+    let meta_url = cf.url.clone().unwrap_or_else(|| raw_url(&rev, &cf.path));
+    if let Ok(resp) = http().get(meta_url).send().await {
         if resp.status().is_success() {
             if let Ok(bytes) = resp.bytes().await {
                 if let Some((_, m)) = acc::parse_car_json(&bytes) {
@@ -285,10 +279,10 @@ fn installed_state(app: AppHandle, customs: String) -> Result<HashMap<String, In
     })
 }
 
-async fn download(rev: &str, path: &str) -> Result<Vec<u8>, String> {
+async fn download(url: &str, label: &str) -> Result<Vec<u8>, String> {
     let mut last = String::new();
     for attempt in 0..3 {
-        match http().get(raw_url(rev, path)).send().await {
+        match http().get(url).send().await {
             Ok(r) if r.status().is_success() => match r.bytes().await {
                 Ok(b) => return Ok(b.to_vec()),
                 Err(e) => last = e.to_string(),
@@ -298,7 +292,7 @@ async fn download(rev: &str, path: &str) -> Result<Vec<u8>, String> {
         }
         tokio_sleep(300 * (attempt + 1)).await;
     }
-    Err(format!("Не удалось скачать {path}: {last}"))
+    Err(format!("Не удалось скачать {label}: {last}"))
 }
 
 async fn tokio_sleep(ms: u64) {
@@ -324,9 +318,9 @@ async fn install_livery(app: AppHandle, customs: String, livery: Livery, commit:
         let mut done = 0usize;
         let mut out = Vec::new();
         let mut s = stream::iter(wanted.into_iter().map(|f| {
-            let rev = commit.clone();
+            let url = f.url.clone().unwrap_or_else(|| raw_url(&commit, &f.path));
             async move {
-                let r = download(&rev, &f.path).await;
+                let r = download(&url, &f.path).await;
                 (f, r)
             }
         }))
@@ -449,9 +443,12 @@ async fn fetch_b64(url: String) -> Result<String, String> {
 
 // ───────────────────────── Команды: админка (GitHub REST) ─────────────────────────
 
-/// POST на Worker с ключом администратора.
+/// POST на Worker с учётными данными администратора.
 async fn worker_post(base: &str, key: &str, path: &str, body: Value) -> Result<Value, String> {
-    let r = http().post(format!("{base}{path}")).bearer_auth(key.trim()).json(&body).send().await.map_err(err("Сервер недоступен"))?;
+    // логин:пароль — в теле запроса, а не в заголовке: в HTTP-заголовках нельзя кириллицу
+    let mut body = body;
+    body["auth"] = Value::String(key.trim().to_string());
+    let r = http().post(format!("{base}{path}")).json(&body).send().await.map_err(err("Сервер недоступен"))?;
     let st = r.status();
     let text = r.text().await.map_err(err("Чтение ответа"))?;
     let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
@@ -461,7 +458,7 @@ async fn worker_post(base: &str, key: &str, path: &str, body: Value) -> Result<V
     Ok(v)
 }
 
-/// `token` — ключ администратора, если задан Worker, иначе персональный токен GitHub.
+/// `token` — «логин:пароль» администратора, если задан Worker, иначе персональный токен GitHub.
 #[tauri::command]
 async fn github_check_token(token: String, worker: Option<String>) -> Result<Value, String> {
     if let Some(base) = worker_base(&worker) {
@@ -554,7 +551,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            build_info,
             default_customs_path,
             ensure_customs,
             open_folder,

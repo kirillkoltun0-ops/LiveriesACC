@@ -1,10 +1,14 @@
-name = "dobeg-livery-proxy"
+name = "dobeg-livery-server"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
 [vars]
 OWNER = "kirillkoltun0-ops"
 REPO = "dobeg-liveries"
-# Секреты задаются командой/в панели, не здесь:
-#   wrangler secret put GH_TOKEN
-#   wrangler secret put ADMIN_KEYS
+
+# Для wrangler: создайте KV (wrangler kv namespace create LIVERIES) и впишите id.
+# Через панель Cloudflare это делается в Settings → Bindings.
+# [[kv_namespaces]]
+# binding = "LIVERIES"
+# id = "…"
+# Секрет логинов админов: wrangler secret put ADMINS   (формат "kirill:пароль,ivan:пароль")

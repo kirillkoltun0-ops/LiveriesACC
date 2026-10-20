@@ -23,7 +23,7 @@
     ],
     "security": {
       "dangerousDisableAssetCspModification": ["style-src"],
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://raw.githubusercontent.com; font-src 'self' data:; connect-src 'self' blob: ipc: http://ipc.localhost https://raw.githubusercontent.com https://api.github.com; worker-src 'self' blob:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://raw.githubusercontent.com https://*.workers.dev; font-src 'self' data:; connect-src 'self' blob: ipc: http://ipc.localhost https://raw.githubusercontent.com https://api.github.com https://*.workers.dev; worker-src 'self' blob:"
     }
   },
   "bundle": {
