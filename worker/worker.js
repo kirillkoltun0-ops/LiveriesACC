@@ -36,7 +36,8 @@ function authAdmin(b, env) {
     const j = entry.indexOf(':');
     if (j < 1) continue;
     const l = entry.slice(0, j).trim().toLowerCase(), p = entry.slice(j + 1).trim();
-    if (p && safeEqual(l, login) & safeEqual(p, pass)) found = entry.slice(0, j).trim(); // без раннего выхода
+    const okLogin = safeEqual(l, login), okPass = safeEqual(p, pass);   // считаем оба — одинаковое время ответа
+    if (p && okLogin && okPass) found = entry.slice(0, j).trim();
   }
   return found;
 }
