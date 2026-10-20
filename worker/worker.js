@@ -63,17 +63,23 @@ async function getIndex(env) {
 }
 const saveIndex = (env, idx) => env.LIVERIES.put('index', JSON.stringify(idx));
 
-/** Дерево публичного GitHub-репозитория (старые ливреи + models/). Кэш 10 минут, ошибки не ломают сервер. */
-async function githubTree(env, origin) {
-  if (!env.OWNER || !env.REPO) return [];
+/** Дерево публичного GitHub-репозитория (старые ливреи + models/). Кэш 10 минут, ошибки не ломают сервер.
+ *  Если задан необязательный секрет GH_TOKEN (любой токен БЕЗ прав, только чтение публичных данных),
+ *  лимит GitHub 5000 запросов/час вместо 60 на общий адрес Cloudflare. */
+async function githubTree(env, origin, info = {}) {
+  if (!env.OWNER || !env.REPO) { info.error = 'OWNER/REPO не заданы'; return []; }
   const key = new Request(`${origin}/__gh`);
   const hit = await caches.default.match(key);
-  if (hit) return hit.json();
+  if (hit) { info.cached = true; return hit.json(); }
   let tree = [];
   try {
-    const r = await fetch(`https://api.github.com/repos/${env.OWNER}/${env.REPO}/git/trees/HEAD?recursive=1`, { headers: { 'User-Agent': 'dobeg-livery-server', Accept: 'application/vnd.github+json' } });
+    const headers = { 'User-Agent': 'dobeg-livery-server', Accept: 'application/vnd.github+json' };
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`;
+    const r = await fetch(`https://api.github.com/repos/${env.OWNER}/${env.REPO}/git/trees/HEAD?recursive=1`, { headers });
+    info.status = r.status;
     if (r.ok) tree = ((await r.json()).tree || []).filter((e) => e.type === 'blob').map((e) => ({ path: e.path, sha: e.sha, size: e.size || 0 }));
-  } catch { /* GitHub недоступен — работаем только с KV */ }
+    else info.error = ((await r.json().catch(() => ({}))).message || '').slice(0, 200);
+  } catch (e) { info.error = String(e.message || e); }
   if (tree.length) await caches.default.put(key, new Response(JSON.stringify(tree), { headers: { 'cache-control': 'max-age=600', 'content-type': 'application/json' } }));
   return tree;
 }
@@ -118,6 +124,7 @@ export default {
       if (req.method === 'GET') {
         if (url.pathname === '/tree') return await handleTree(req, env, ctx);
         if (url.pathname.startsWith('/f/')) return await handleFile(url, env);
+        if (url.pathname === '/debug') { const info = {}; const t = await githubTree(env, url.origin, info); const idx = await getIndex(env); return json({ github: { ...info, files: t.length, tokenSet: !!env.GH_TOKEN, owner: env.OWNER, repo: env.REPO }, kvFiles: Object.keys(idx.files).length }); }
         if (url.pathname === '/') return json({ service: 'dobeg-livery-server', ok: true, kv: !!env.LIVERIES });
         return json({ error: 'Not found' }, 404);
       }
