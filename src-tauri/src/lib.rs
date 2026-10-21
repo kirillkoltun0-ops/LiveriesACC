@@ -501,12 +501,52 @@ async fn current_sha(token: &Option<String>, path: &str) -> Result<Option<String
     Ok(serde_json::from_str::<Value>(&body).ok().and_then(|v| v["sha"].as_str().map(String::from)))
 }
 
-/// Создаёт или обновляет файл: через Worker (по ключу админа) или напрямую `PUT /repos/{owner}/{repo}/contents/{path}`.
+/// Загрузка файла на Worker сырыми байтами (без base64 на стороне сервера — экономит его процессорное время).
+/// Большие модели передаются частями: `part`/`parts`, а `sha` и `size` описывают файл целиком.
+async fn worker_put(base: &str, key: &str, path: &str, bytes: Vec<u8>, sha: &str, part: u32, parts: u32, size: u64) -> Result<Value, String> {
+    let enc = |s: &str| utf8_percent_encode(s, NON_ALPHANUMERIC).to_string();
+    let r = http()
+        .post(format!("{base}/put"))
+        .header("x-auth", enc(key.trim()))
+        .header("x-path", enc(path))
+        .header("x-sha", sha)
+        .header("x-part", part.to_string())
+        .header("x-parts", parts.to_string())
+        .header("x-size", size.to_string())
+        .header("content-type", "application/octet-stream")
+        .body(bytes)
+        .send()
+        .await
+        .map_err(err("Сервер недоступен"))?;
+    let st = r.status();
+    let text = r.text().await.map_err(err("Чтение ответа"))?;
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if !st.is_success() {
+        return Err(v["error"].as_str().map(String::from).unwrap_or_else(|| format!("Сервер вернул {st}")));
+    }
+    Ok(v)
+}
+
+/// Создаёт или обновляет файл: через Worker (по логину и паролю) или напрямую `PUT /repos/{owner}/{repo}/contents/{path}`.
 #[tauri::command]
-async fn github_put_file(token: String, path: String, content_b64: String, message: String, worker: Option<String>) -> Result<String, String> {
+#[allow(clippy::too_many_arguments)]
+async fn github_put_file(
+    token: String,
+    path: String,
+    content_b64: String,
+    message: String,
+    worker: Option<String>,
+    sha: Option<String>,
+    part: Option<u32>,
+    parts: Option<u32>,
+    size: Option<u64>,
+) -> Result<String, String> {
     if let Some(base) = worker_base(&worker) {
-        let v = worker_post(&base, &token, "/put", json!({ "path": path, "content": content_b64, "message": message })).await?;
-        return Ok(v["sha"].as_str().unwrap_or("").to_string());
+        let bytes = B64.decode(content_b64.as_bytes()).map_err(err("Некорректные данные файла"))?;
+        let sha = sha.ok_or("Не передана контрольная сумма файла")?;
+        let total = size.unwrap_or(bytes.len() as u64);
+        worker_put(&base, &token, &path, bytes, &sha, part.unwrap_or(0), parts.unwrap_or(1), total).await?;
+        return Ok(sha);
     }
     let t = Some(token);
     let sha = current_sha(&t, &path).await?;

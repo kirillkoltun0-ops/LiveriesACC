@@ -415,6 +415,14 @@ table.t td:last-child{text-align:right}
           <h3><span class="n">3</span> Ливреи в репозитории</h3>
           <table class="t"><thead><tr><th>Команда</th><th>Ливрея</th><th>Файлы</th><th></th></tr></thead><tbody id="repoRows"></tbody></table>
         </div>
+
+        <div class="glass panel">
+          <h3><span class="n">4</span> 3D-модели кузовов</h3>
+          <p class="muted tiny" style="margin-bottom:12px">Загрузите файлы <b>.obj</b> (или .glb) с названиями машин, например «McLaren 720S GT3 Evo.obj». Файлы .mtl не нужны. Большие модели грузятся частями. Модели можно также бросить в окно вместе с папкой.</p>
+          <button class="btn primary" id="btnPickModels">Выбрать модели…</button>
+          <input type="file" id="modelInput" accept=".obj,.glb,.gltf" multiple hidden>
+          <table class="t" style="margin-top:14px"><thead><tr><th>Файл</th><th>Размер</th><th></th></tr></thead><tbody id="modelRows"></tbody></table>
+        </div>
       </div>
     </section>
   </main>

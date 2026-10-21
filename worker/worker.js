@@ -9,9 +9,10 @@
 //   Variables and Secrets:    ADMINS (секрет) = "kirill:пароль1,ivan:пароль2"
 //                             OWNER, REPO (текст) — репозиторий с моделями/старыми ливреями (необязательно)
 
-const ALLOWED = /\.(png|json|webp)$/i;
-const MAX_B64 = 34_000_000;          // ≈25 МБ файла — лимит значения KV
-const TYPES = { png: 'image/png', json: 'application/json', webp: 'image/webp' };
+const SKIN_EXT = /\.(png|json|webp)$/i;
+const MODEL_EXT = /\.(obj|glb|gltf)$/i;
+const MAX_PART = 24 * 1024 * 1024;   // лимит значения KV 25 МБ — большие модели режутся на части
+const TYPES = { png: 'image/png', json: 'application/json', webp: 'image/webp', obj: 'text/plain; charset=utf-8', glb: 'model/gltf-binary', gltf: 'model/gltf+json' };
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
 const json = (obj, status = 200, extra = {}) =>
@@ -26,8 +27,9 @@ function safeEqual(a, b) {
 }
 
 /** Поле auth тела запроса «логин:пароль» (не заголовок — в нём нельзя кириллицу) → имя админа или null. */
-function authAdmin(b, env) {
-  const cred = String(b.auth || '').trim();
+function authAdmin(b, env, req) {
+  let cred = String(b.auth || '').trim();
+  if (!cred && req?.headers.get('x-auth')) { try { cred = decodeURIComponent(req.headers.get('x-auth')).trim(); } catch { cred = ''; } }
   const i = cred.indexOf(':');
   if (i < 1 || !env.ADMINS) return null;
   const login = cred.slice(0, i).toLowerCase(), pass = cred.slice(i + 1);
@@ -43,9 +45,11 @@ function authAdmin(b, env) {
 }
 
 function validPath(p) {
-  return typeof p === 'string' && p.length > 0 && p.length < 300 && !p.includes('..') && !p.includes('\\') &&
-    !p.startsWith('/') && p.split('/').every((s) => s && !s.startsWith('.')) && ALLOWED.test(p) &&
-    p.split('/')[0].toLowerCase() !== 'models';
+  if (typeof p !== 'string' || !p || p.length > 300 || p.includes('..') || p.includes('\\') || p.startsWith('/')) return false;
+  const segs = p.split('/');
+  if (!segs.every((x) => x && !x.startsWith('.'))) return false;
+  if (segs[0].toLowerCase() === 'models') return segs.length === 2 && MODEL_EXT.test(p);   // модели — только models/<имя>
+  return SKIN_EXT.test(p);
 }
 
 /** Git-совместимый blob SHA-1 — лаунчер сравнивает им файлы, чтобы не заливать лишнее. */
@@ -55,8 +59,6 @@ async function gitSha(bytes) {
   all.set(head); all.set(bytes, head.length);
   return [...new Uint8Array(await crypto.subtle.digest('SHA-1', all))].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
-
-const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 // ── индекс ливрей в KV: один ключ, чтобы /tree стоил одно чтение ──
 async function getIndex(env) {
@@ -111,10 +113,24 @@ async function handleTree(req, env, ctx) {
 async function handleFile(url, env) {
   const path = decodeURIComponent(url.pathname.slice(3));
   if (!validPath(path)) return new Response('Not found', { status: 404, headers: CORS });
+  const ext = path.split('.').pop().toLowerCase();
+  const headers = { 'content-type': TYPES[ext] || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable', ...CORS };
+  const meta = path.toLowerCase().startsWith('models/') ? (await getIndex(env)).files[path] : null;
+  if (meta?.parts > 1) {                                           // большая модель: склеиваем части потоком
+    let i = 0;
+    const stream = new ReadableStream({
+      async pull(c) {
+        if (i >= meta.parts) return c.close();
+        const part = await env.LIVERIES.get(`f:${path}#${i++}`, 'arrayBuffer');
+        if (!part) return c.error(new Error('part missing'));
+        c.enqueue(new Uint8Array(part));
+      },
+    });
+    return new Response(stream, { headers: { ...headers, 'content-length': String(meta.size) } });
+  }
   const data = await env.LIVERIES.get('f:' + path, 'arrayBuffer');
   if (!data) return new Response('Not found', { status: 404, headers: CORS });
-  const ext = path.split('.').pop().toLowerCase();
-  return new Response(data, { headers: { 'content-type': TYPES[ext] || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable', ...CORS } });
+  return new Response(data, { headers });
 }
 
 export default {
@@ -131,35 +147,48 @@ export default {
       }
       if (req.method !== 'POST') return json({ error: 'Not found' }, 404);
       if (!env.LIVERIES) return json({ error: 'К Worker не привязано хранилище KV (переменная LIVERIES)' }, 500);
-
-      const b = await req.json().catch(() => ({}));
-      const admin = authAdmin(b, env);
-      if (!admin) return json({ error: 'Неверный логин или пароль' }, 401);
       const purge = () => caches.default.delete(new Request(`${url.origin}/tree`));
 
-      if (url.pathname === '/check') return json({ ok: true, name: admin });
-
+      // Загрузка файла: тело — сырые байты (без base64: бесплатный тариф даёт всего ~10 мс процессора).
+      // Метаданные — в заголовках: x-auth, x-path, x-sha, x-size, x-part, x-parts (все percent-encoded).
       if (url.pathname === '/put') {
-        if (!validPath(b.path)) return json({ error: 'Недопустимый путь или тип файла' }, 400);
-        if (typeof b.content !== 'string' || !b.content || b.content.length > MAX_B64) return json({ error: 'Файл пустой или больше 25 МБ' }, 400);
-        const bytes = b64ToBytes(b.content);
-        const sha = await gitSha(bytes);
-        await env.LIVERIES.put('f:' + b.path, bytes);            // сначала файл…
+        const admin = authAdmin({}, env, req);
+        if (!admin) return json({ error: 'Неверный логин или пароль' }, 401);
+        const h = (n) => { try { return decodeURIComponent(req.headers.get(n) || ''); } catch { return ''; } };
+        const path = h('x-path'), sha = h('x-sha'), part = +(h('x-part') || 0), parts = +(h('x-parts') || 1), size = +(h('x-size') || 0);
+        if (!validPath(path)) return json({ error: 'Недопустимый путь или тип файла' }, 400);
+        if (!/^[0-9a-f]{40}$/.test(sha)) return json({ error: 'Не передана контрольная сумма файла' }, 400);
+        const body = await req.arrayBuffer();
+        if (!body.byteLength || body.byteLength > MAX_PART) return json({ error: 'Часть файла пустая или больше 24 МБ' }, 400);
+        if (parts > 1 && !path.toLowerCase().startsWith('models/')) return json({ error: 'Большие файлы допустимы только для моделей' }, 400);
+        if (parts <= 1) {
+          await env.LIVERIES.put('f:' + path, body);
+        } else {
+          await env.LIVERIES.put(`f:${path}#${part}`, body);
+          if (part < parts - 1) return json({ ok: true, part });   // индекс обновляем только после последней части
+        }
         const idx = await getIndex(env);
-        idx.files[b.path] = { sha, size: bytes.length, by: admin, at: Date.now() };
-        idx.deleted = (idx.deleted || []).filter((p) => p !== b.path);
-        await saveIndex(env, idx);                               // …потом индекс: пилот не увидит файл, которого ещё нет
+        idx.files[path] = { sha, size: parts > 1 ? size : body.byteLength, parts: parts > 1 ? parts : 1, by: admin, at: Date.now() };
+        idx.deleted = (idx.deleted || []).filter((x) => x !== path);
+        await saveIndex(env, idx);
         await purge();
         return json({ sha });
       }
 
+      const b = await req.json().catch(() => ({}));
+      const admin = authAdmin(b, env, req);
+      if (!admin) return json({ error: 'Неверный логин или пароль' }, 401);
+      if (url.pathname === '/check') return json({ ok: true, name: admin });
+
       if (url.pathname === '/delete') {
         if (!validPath(b.path)) return json({ error: 'Недопустимый путь' }, 400);
         const idx = await getIndex(env);
+        const old = idx.files[b.path];
         delete idx.files[b.path];
         if (!(idx.deleted || []).includes(b.path)) (idx.deleted ||= []).push(b.path);   // скрывает и файл из старого GitHub-репозитория
         await saveIndex(env, idx);
         await env.LIVERIES.delete('f:' + b.path);
+        for (let i = 0; i < (old?.parts || 0); i++) await env.LIVERIES.delete(`f:${b.path}#${i}`);
         await purge();
         return json({ ok: true });
       }

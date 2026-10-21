@@ -659,6 +659,8 @@ function renderAdmin() {
   const rows = (S.remote?.liveries ?? []).map((l) => `<tr><td>${esc(teamLabel(l.team))}</td><td>${esc(l.name)}</td>
     <td>${l.files.length + (l.carFile ? 1 : 0)}${l.preview ? ' <span class="chiplet">превью</span>' : ''}${l.junkCount ? ` <span class="muted">(+${l.junkCount} мусор)</span>` : ''}</td>
     <td><button class="btn sm danger" data-del="${esc(l.id)}">Удалить из репозитория</button></td></tr>`).join('');
+  $('#modelRows').innerHTML = (S.remote?.models ?? []).map((m) => `<tr><td>${esc(m.name)}</td><td>${fmtBytes(m.size || 0)}</td>
+    <td><button class="btn sm danger" data-delm="${esc(m.path)}">Удалить</button></td></tr>`).join('') || `<tr><td colspan="3" class="muted">Моделей пока нет — загрузите .obj выше</td></tr>`;
   $('#repoRows').innerHTML = rows || `<tr><td colspan="4" class="muted">Пусто</td></tr>`;
 }
 
@@ -729,6 +731,13 @@ async function readCar(file) {
 
 async function ingest(list) {
   if (!list.length) return toast('Папка пуста', '', 'warn');
+  // 3D-модели (.obj/.glb) загружаются отдельно и автоматически; .mtl не нужны — кузов красится ливреей
+  const modelFiles = list.filter((x) => /\.(obj|glb|gltf)$/i.test(x.path));
+  if (modelFiles.length) {
+    list = list.filter((x) => !/\.(obj|glb|gltf|mtl)$/i.test(x.path));
+    await uploadModels(modelFiles.map((x) => x.file));
+    if (!list.length) return;
+  }
   const byDir = new Map();
   for (const x of list) {
     const i = x.path.lastIndexOf('/');
@@ -780,6 +789,41 @@ async function ingest(list) {
     else toast('Нужна ваша помощь', 'Выберите кузов в чек-листе и нажмите «Опубликовать».', 'warn', 6000);
   }
 }
+
+/** Загрузка 3D-моделей на сервер; большие файлы режутся на части по 8 МБ. */
+async function uploadModels(files) {
+  if (!S.token || !S.login) return toast('Войдите как администратор', 'Нажмите на профиль в шапке.', 'warn', 5000);
+  const CH = 8 * 1024 * 1024;
+  const known = new Map((S.remote?.models ?? []).map((m) => [m.name, m.sha]));
+  const t = toast('Загрузка 3D-моделей', `0 / ${files.length}`, 'info', 0).update(null, null, 0);
+  let done = 0, uploaded = 0;
+  for (const f of files) {
+    const name = safeName(f.name), path = `models/${name}`;
+    try {
+      const buf = await f.arrayBuffer();
+      const sha = await gitBlobSha(buf);
+      if (known.get(name) !== sha) {
+        const parts = Math.max(1, Math.ceil(buf.byteLength / CH));
+        if (parts > 1 && !usesWorker()) throw new Error('Большие модели можно загружать только через сервер Cloudflare');
+        for (let i = 0; i < parts; i++) {
+          t.update(null, `${name}${parts > 1 ? ` · часть ${i + 1}/${parts}` : ''}`, (done + i / parts) / files.length);
+          await invoke('github_put_file', { token: S.token, path, contentB64: bufToB64(buf.slice(i * CH, (i + 1) * CH)), message: `Add ${path}`, worker: workerUrl() || null, sha, part: i, parts, size: buf.byteLength });
+        }
+        uploaded++;
+      }
+    } catch (e) { toast(`Модель ${f.name} не загрузилась`, errText(e), 'bad', 9000); }
+    done++;
+  }
+  t.close();
+  toast('Модели обработаны', `Загружено: ${uploaded}, без изменений: ${files.length - uploaded}`, uploaded ? 'ok' : 'info', 5000);
+  await sync({ silent: true, auto: false });
+}
+$('#btnPickModels').onclick = () => $('#modelInput').click();
+$('#modelInput').addEventListener('change', async (e) => {
+  const files = [...e.target.files].filter((f) => /\.(obj|glb|gltf)$/i.test(f.name));
+  e.target.value = '';
+  if (files.length) await uploadModels(files); else toast('Нужны файлы .obj / .glb', '', 'warn');
+});
 
 const GENERIC_DIRS = ['liveries', 'customs', 'cars', 'skins', 'dobeg'];
 /** Команда: teamName из конфига авто → родительская папка (если не служебная) → последняя использованная. */
@@ -921,7 +965,7 @@ async function publish() {
         } catch { /* превью — приятный бонус, публикацию не блокируем */ }
       }
     }
-    for (const p of plan) p.same = remote.get(p.path) === (await gitBlobSha(p.buf));
+    for (const p of plan) { p.sha = await gitBlobSha(p.buf); p.same = remote.get(p.path) === p.sha; }
     const todo = plan.filter((p) => !p.same);
     if (!todo.length) { toast('Изменений нет', 'Все файлы уже совпадают с репозиторием.', 'info'); return; }
 
@@ -929,7 +973,7 @@ async function publish() {
     let done = 0;
     for (const p of todo) {
       step.textContent = `Загрузка ${done + 1}/${todo.length}: ${p.path}`;
-      await invoke('github_put_file', { token: S.token, path: p.path, contentB64: p.b64 ?? bufToB64(p.buf), message: `${remote.has(p.path) ? 'Update' : 'Add'} ${p.path}`, worker: workerUrl() || null });
+      await invoke('github_put_file', { token: S.token, path: p.path, contentB64: p.b64 ?? bufToB64(p.buf), message: `${remote.has(p.path) ? 'Update' : 'Add'} ${p.path}`, worker: workerUrl() || null, sha: p.sha, part: 0, parts: 1, size: p.buf.byteLength });
       done++; $('i', bar).style.width = `${Math.round((done / todo.length) * 100)}%`;
     }
     step.textContent = `Готово: загружено файлов — ${done}, без изменений — ${plan.length - done}`;
@@ -947,6 +991,14 @@ async function publish() {
   }
 }
 $('#btnPublish').onclick = publish;
+
+$('#modelRows').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-delm]'); if (!b) return;
+  if (!S.token) return toast('Нужен вход', '', 'warn');
+  if (!(await ask('Удалить модель?', b.dataset.delm, 'Удалить'))) return;
+  try { await invoke('github_delete_file', { token: S.token, path: b.dataset.delm, message: `Remove ${b.dataset.delm}`, worker: workerUrl() || null }); toast('Удалено', '', 'ok', 2000); await sync({ silent: true, auto: false }); }
+  catch (err) { toast('Ошибка удаления', errText(err), 'bad', 8000); }
+});
 
 $('#repoRows').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-del]'); if (!b) return;
