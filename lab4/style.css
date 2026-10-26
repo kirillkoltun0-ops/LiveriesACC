@@ -1,0 +1,108 @@
+/* 1. Цвет фона страницы (отличный от белого, на весь экран) */
+body {
+    background-color: #7ca8d4;
+    margin: 20px;
+    font-family: Arial, sans-serif;
+}
+table{
+    border-color: #c6c2c2;
+}
+th {
+    background-color: #b6d0ea;
+}
+
+tr {
+    background-color: #d1dfed;
+}
+
+/* 3. Селектор по идентификатору для главного заголовка */
+#main-title {
+    color: #333333;
+}
+
+/* 4. Стилизация навигационного списка: убираем маркеры, делаем ссылки черными без подчеркивания */
+.nav-list {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.nav-list a {
+    color: #000000;
+    text-decoration: none;
+}
+
+/* Псевдокласс hover для ссылок из методички */
+.nav-list a:hover {
+    color: #0066cc;
+    text-decoration: underline;
+}
+
+/* 5. Базовый стиль описаний */
+.movie-desc {
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* 6 и 7. Картинки одинакового размера с закругленными краями (используем свойства боксовой модели: border, padding, margin) */
+.movie-img {
+    width: 260px;
+    height: 170px;
+    border-radius: 10px;       
+    border: none; 
+    padding: 3px;             
+    margin-right: 8px;      
+    background-color: #ffffff;
+}
+/* 2. Контент шириной 1440px, при большем экране центрируется (фон body занимает весь экран) */
+.wrapper {
+    width: 1440px;
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+/* 3. Шрифты из файлов репозитория */
+@font-face {
+    font-family: "PlexMono";
+    src: url("fonts/IBMPlexMono-Regular.ttf") format("truetype");
+}
+
+@font-face {
+    font-family: "Comfortaa";
+    src: url("fonts/Comfortaa.ttf") format("truetype");
+}
+
+@font-face {
+    font-family: "MarckScript";
+    src: url("fonts/MarckScript-Regular.ttf") format("truetype");
+}
+
+/* Свой шрифт для каждого фильма (всё описание: заголовки, текст, таблица) */
+.film.matrix {
+    font-family: "PlexMono", monospace;
+}
+
+.film.interstellar {
+    font-family: "Comfortaa", sans-serif;
+}
+
+.film.lotr {
+    font-family: "MarckScript", cursive;
+}
+
+/* 5. Разное выравнивание текста описаний */
+.matrix-desc {
+    text-align: center;
+}
+
+.interstellar-desc {
+    text-align: justify;
+}
+
+.lotr-desc {
+    text-align: right;
+}
+
+/* 8. Жирность через CSS (кроме тегов <b> и <strong> в html) */
+.highlight-text {
+    font-weight: bold;
+}
