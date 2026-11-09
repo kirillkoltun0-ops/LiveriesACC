@@ -9,6 +9,7 @@
 //   Variables and Secrets:    ADMINS (секрет) = "kirill:пароль1,ivan:пароль2"
 //                             OWNER, REPO (текст) — репозиторий с моделями/старыми ливреями (необязательно)
 
+const VERSION = 3;   // v3: загрузка файлов сырыми байтами (/put с заголовками x-*)
 const SKIN_EXT = /\.(png|json|webp)$/i;
 const MODEL_EXT = /\.(obj|glb|gltf)$/i;
 const MAX_PART = 24 * 1024 * 1024;   // лимит значения KV 25 МБ — большие модели режутся на части
@@ -142,7 +143,7 @@ export default {
         if (url.pathname === '/tree') return await handleTree(req, env, ctx);
         if (url.pathname.startsWith('/f/')) return await handleFile(url, env);
         if (url.pathname === '/debug') { const info = {}; const t = await githubTree(env, url.origin, info); const idx = await getIndex(env); return json({ github: { ...info, files: t.length, tokenSet: !!env.GH_TOKEN, owner: env.OWNER, repo: env.REPO }, kvFiles: Object.keys(idx.files).length }); }
-        if (url.pathname === '/') return json({ service: 'dobeg-livery-server', ok: true, kv: !!env.LIVERIES });
+        if (url.pathname === '/') return json({ service: 'dobeg-livery-server', ok: true, kv: !!env.LIVERIES, version: VERSION, admins: (env.ADMINS || '').split(',').filter((e) => e.indexOf(':') > 0).length });
         return json({ error: 'Not found' }, 404);
       }
       if (req.method !== 'POST') return json({ error: 'Not found' }, 404);
