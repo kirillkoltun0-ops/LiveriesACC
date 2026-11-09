@@ -28,7 +28,7 @@ const S = {
 const DEFAULT_CFG = {
   theme: 'dobeg', accent: null, anim: 'full', bgAnim: true, density: 'normal', scale: 100, tilt: true, blur: true,
   autoUpd: true, autoNew: true, syncMin: 10, syncOnFocus: true, notifyNew: true,
-  showRotate: true, showBase: '#1c1f29', showQuality: 'auto', autoPreview: true,
+  showRotate: true, wheels: true, showBase: '#1c1f29', showQuality: 'auto', autoPreview: true,
   autoPublish: true, adminPreview: true,
 };
 const old = ls.get('opt', {});
@@ -378,7 +378,7 @@ async function openShow(id) {
   show.resize(); show.start();
   spin = S.cfg.showRotate; $('#shRotate').classList.toggle('primary', !spin);
   show.setFlipY(!flipOn); show.setAutoRotate(spin);
-  show.setQuality(S.cfg.showQuality); show.setBaseColor(S.cfg.showBase); $('#shBase').value = S.cfg.showBase; syncAccent();
+  show.setQuality(S.cfg.showQuality); show.setWheels(S.cfg.wheels); show.setBaseColor(S.cfg.showBase); $('#shBase').value = S.cfg.showBase; syncAccent();
   updateShowInstallBtn();
 
   const models = S.remote.models, sel = $('#shModel');
@@ -454,7 +454,7 @@ $('#btnPrevAll').onclick = async () => {
   let sr;
   try {
     sr = new Showroom($('canvas', holder), { interactive: false });
-    sr.resize();
+    sr.setWheels(S.cfg.wheels); sr.resize();
     let n = 0;
     for (const { l, m } of todo) {
       try {
@@ -605,6 +605,7 @@ const onCfgInput = (e) => {
   if (e.type === 'change' || el.type !== 'range') {
     if (k === 'syncMin') scheduleSync();
     if (k === 'showBase') show?.setBaseColor(S.cfg.showBase);
+    if (k === 'wheels') show?.setWheels(S.cfg.wheels);
     applyCfg();
   }
 };
@@ -913,7 +914,7 @@ function hiddenShowroom() {
   holder.innerHTML = '<canvas></canvas>';
   document.body.append(holder);
   const sr = new Showroom($('canvas', holder), { interactive: false });
-  sr.setQuality('1'); sr.resize();
+  sr.setQuality('1'); sr.setWheels(S.cfg.wheels); sr.resize();
   const dispose = sr.dispose.bind(sr);
   sr.dispose = () => { dispose(); holder.remove(); };
   return sr;

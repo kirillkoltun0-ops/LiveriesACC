@@ -140,6 +140,9 @@ export class Showroom {
     this.baseColor = '#1c1f29';
     this.mat = new THREE.MeshPhysicalMaterial({ map: this.tex, roughness: 0.35, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.05 });
     this.modelCache = new Map();
+    this.wheelsOn = true;
+    this.carInfo = null;
+    this.wheelGroup = null;
     this.token = 0;
     this.running = false;
     this.compose();
@@ -172,6 +175,32 @@ export class Showroom {
   /** Цвет контровой подсветки = акцент темы. */
   setAccent(css) { try { this.rim.color.set(css); } catch { /* неподдерживаемый формат цвета */ } }
   setQuality(q) { this.r.setPixelRatio(q === 'auto' ? Math.min(window.devicePixelRatio || 1, 2) : +q); this.resize(); }
+
+  setWheels(v) { this.wheelsOn = v; this._applyWheels(); }
+
+  /** Если в модели нет колёс (ACC хранит их отдельно от кузова) — достраиваем 4 колеса по габаритам кузова. */
+  _applyWheels() {
+    if (this.wheelGroup) { this.pivot.remove(this.wheelGroup); this.wheelGroup = null; }
+    const ci = this.carInfo;
+    if (!this.wheelsOn || !ci || ci.hasWheels) return;
+    const alongX = ci.size.x >= ci.size.z;
+    const L = alongX ? ci.size.x : ci.size.z, W = alongX ? ci.size.z : ci.size.x;
+    const k = L / 4.6, r = 0.34 * k, tw = 0.30 * k;
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(r, r, tw, 40), new THREE.MeshStandardMaterial({ color: 0x0d0d0f, roughness: 0.92 }));
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.66, r * 0.66, tw * 1.03, 32), new THREE.MeshStandardMaterial({ color: 0x8d9098, metalness: 0.9, roughness: 0.3 }));
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.2, r * 0.2, tw * 1.06, 16), new THREE.MeshStandardMaterial({ color: 0x25272c, metalness: 0.8, roughness: 0.4 }));
+    const g = new THREE.Group();
+    for (const a of [-1, 1]) for (const l of [-1, 1]) {
+      const w = new THREE.Group();
+      w.add(tire.clone(), rim.clone(), hub.clone());
+      if (alongX) w.rotation.x = Math.PI / 2; else w.rotation.z = Math.PI / 2;   // ось колеса — поперёк кузова
+      const along = a * 0.29 * L, side = l * (W / 2 - tw / 2 + 0.02 * k);
+      w.position.set(alongX ? along : side, r, alongX ? side : along);
+      g.add(w);
+    }
+    this.wheelGroup = g;
+    this.pivot.add(g);
+  }
 
   setAutoRotate(v) { this.controls.autoRotate = v; }
   setBaseColor(hex) { this.baseColor = hex; this.compose(); }
@@ -249,6 +278,8 @@ export class Showroom {
     root.scale.multiplyScalar(k);
     root.position.set(-ctr.x * k, -box.min.y * k, -ctr.z * k);
     this.pivot.add(root);
+    this.carInfo = { size: size.clone().multiplyScalar(k), hasWheels: meshes.some((m) => /wheel|tire|tyre|rim/i.test(`${m.name} ${m.material?.name ?? ''} ${m.parent?.name ?? ''}`)) };
+    this._applyWheels();
     return { meshes: meshes.length, bodyCount };
   }
 
