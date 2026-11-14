@@ -1,0 +1,16 @@
+import w from '../worker.js';
+const mem=new Map(); const KV={get:async(k,t)=>{const v=mem.get(k); if(v===undefined)return null; return t==='json'?JSON.parse(v):t==='arrayBuffer'?v.buffer.slice(v.byteOffset,v.byteOffset+v.byteLength):v},put:async(k,v)=>{mem.set(k,typeof v==='string'?v:new Uint8Array(v))},delete:async k=>{mem.delete(k)}};
+const store=new Map(); globalThis.caches={default:{match:async k=>{const r=store.get(k.url);return r?r.clone():undefined},put:async(k,v)=>{store.set(k.url,v)},delete:async k=>store.delete(k.url)}};
+globalThis.fetch=async(u)=>{ if(u.includes('/git/trees/'))return new Response(JSON.stringify({tree:[{path:'models/Car.obj',type:'blob',sha:'m1',size:5},{path:'Old Team/Old Skin/decals.png',type:'blob',sha:'o1',size:9},{path:'Old Team/Old Skin/sponsors.png',type:'blob',sha:'o2',size:9}]})); return new Response('',{status:404})};
+const env={OWNER:'o',REPO:'r',ADMINS:'Кирилл:pass1,ivan:p:2',LIVERIES:KV}; const ctx={waitUntil:p=>p};
+const rq=(m,p,b,c)=>new Request('https://w.dev'+p,{method:m,body:m==='GET'?undefined:JSON.stringify({...(b||{}),auth:c})});
+let r=await w.fetch(rq('GET','/tree'),env,ctx); let t=await r.json(); console.log('tree',r.status,t.tree.length,t.tree[1].url);
+r=await w.fetch(rq('POST','/check',{},'кирилл:pass1'),env,ctx); console.log('login ci',r.status,await r.json());
+r=await w.fetch(rq('POST','/check',{},'ivan:p:2'),env,ctx); console.log('pass with colon',r.status);
+r=await w.fetch(rq('POST','/check',{},'ivan:bad'),env,ctx); console.log('bad pass',r.status);
+const b64=btoa('hello'); r=await w.fetch(rq('POST','/put',{path:'Команда/Скин/decals.png',content:b64},'Кирилл:pass1'),env,ctx); const pj=await r.json(); console.log('put',r.status,pj);
+r=await w.fetch(rq('POST','/put',{path:'models/x.png',content:b64},'Кирилл:pass1'),env,ctx); console.log('models blocked',r.status);
+r=await w.fetch(rq('GET','/tree'),env,ctx); t=await r.json(); console.log('tree after',t.tree.map(e=>e.path));
+const f=t.tree.find(e=>e.path.startsWith('Команда')); r=await w.fetch(new Request(f.url),env,ctx); console.log('file',r.status,await r.text(),r.headers.get('content-type'));
+r=await w.fetch(rq('POST','/delete',{path:'Old Team/Old Skin/decals.png'},'Кирилл:pass1'),env,ctx);
+r=await w.fetch(rq('GET','/tree'),env,ctx); t=await r.json(); console.log('after delete legacy',t.tree.map(e=>e.path));
